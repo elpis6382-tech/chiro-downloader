@@ -14,10 +14,18 @@ sealed interface Event {
         val index: Int?,
         val count: Int?,
         val title: String?,
+        /** False for aria2c readouts, which don't say whether this is the video or the audio part. */
+        val partKnown: Boolean = true,
     ) : Event {
         val fraction: Float?
             get() = if (done != null && total != null && total > 0) (done.toDouble() / total).coerceIn(0.0, 1.0).toFloat() else null
     }
+
+    /** A video is about to be downloaded (printed once per video, also for each playlist item). */
+    data class Item(val title: String?, val index: Int?, val count: Int?) : Event
+
+    /** A file starts downloading: the single file, or the video/audio part of a video that gets merged. */
+    data class Part(val audio: Boolean, val videoOnly: Boolean) : Event
 
     /** A finishing step: merging video+audio, fixing a stream into MP4, pulling out audio, moving the file. */
     data class Post(val step: String, val title: String?) : Event
@@ -30,6 +38,7 @@ sealed interface Event {
 object Lines {
     private const val DL = "@@P"
     private const val PP = "@@Q"
+    private const val IT = "@@T"
 
     // Title goes last because it may contain the separator.
     val downloadTemplate = "download:$DL|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|" +
@@ -37,6 +46,15 @@ object Lines {
         "%(info.playlist_index)s|%(info.n_entries)s|%(info.title)s"
 
     val postTemplate = "postprocess:$PP|%(progress.status)s|%(progress.postprocessor)s|%(info.title)s"
+
+    /** For --print (with --no-quiet): the title as soon as the video is known, even when aria2c does the downloading. */
+    val itemTemplate = "before_dl:$IT|%(playlist_index)s|%(n_entries)s|%(title)s"
+
+    // aria2c's once-a-second summary: [#0eada7 352KiB/57MiB(0%) CN:7 DL:356KiB ETA:2m43s]
+    private val aria = Regex("""^\[#[0-9a-fA-F]+ ([\d.]+)([KMGT]?i?B)(?:/([\d.]+)([KMGT]?i?B)\((\d+)%\))?(?: CN:\d+)?(?: SD:\d+)?(?: DL:([\d.]+)([KMGT]?i?B))?(?: UL:\S+)?(?: ETA:([\dhms]+))?]""")
+    private val destination = Regex("""^\[download] Destination: (.+)$""")
+    private val formatPart = Regex("""\.f[\w-]+\.\w+$""")
+    private val audioExt = setOf("m4a", "mp3", "aac", "opus", "ogg", "oga", "weba", "mka", "wav", "flac")
 
     private val bracketStep = Regex("""^\[(Merger|FixupM3u8|FixupM4a|FixupStretched|FixupDuplicateMoov|FixupTimestamp|VideoRemuxer|VideoConvertor|ExtractAudio|MoveFiles)]""")
     private val looking = Regex("""^\[[A-Za-z0-9:_]+] """)
@@ -61,6 +79,28 @@ object Lines {
                 title = f[11].na(),
             )
         }
+        if (l.startsWith("$IT|")) {
+            val f = l.split('|', limit = 4)
+            if (f.size < 4) return null
+            return Event.Item(title = f[3].na(), index = f[1].num()?.toInt(), count = f[2].num()?.toInt())
+        }
+        aria.find(l)?.let { m ->
+            val g = m.groupValues
+            val done = bytes(g[1], g[2])
+            val total = if (g[3].isNotEmpty()) bytes(g[3], g[4]) else null
+            return Event.Download(
+                status = "downloading", done = done, total = total?.takeIf { it > 0 },
+                speed = if (g[6].isNotEmpty()) bytes(g[6], g[7])?.toDouble() else null,
+                etaSec = if (g[8].isNotEmpty()) eta(g[8]) else null,
+                audioOnly = false, videoOnly = false, index = null, count = null, title = null, partKnown = false,
+            )
+        }
+        destination.find(l)?.let { m ->
+            val path = m.groupValues[1].trim().removeSurrounding("\"")
+            val ext = path.substringAfterLast('.', "").lowercase()
+            val audio = ext in audioExt
+            return Event.Part(audio = audio, videoOnly = !audio && formatPart.containsMatchIn(path))
+        }
         if (l.startsWith("$PP|")) {
             val f = l.split('|', limit = 4)
             if (f.size < 4) return null
@@ -69,6 +109,24 @@ object Lines {
         bracketStep.find(l)?.let { return Event.Post(step = it.groupValues[1], title = null) }
         if (looking.containsMatchIn(l) && !l.startsWith("[download]") && !l.startsWith("[debug]")) return Event.Looking
         return null
+    }
+
+    private fun bytes(n: String, unit: String): Long? {
+        val v = n.toDoubleOrNull() ?: return null
+        val mul = when (unit.uppercase().firstOrNull()) {
+            'K' -> 1024.0
+            'M' -> 1024.0 * 1024
+            'G' -> 1024.0 * 1024 * 1024
+            'T' -> 1024.0 * 1024 * 1024 * 1024
+            else -> 1.0
+        }
+        return (v * mul).toLong()
+    }
+
+    private fun eta(s: String): Long? {
+        val m = Regex("""(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?""").matchEntire(s) ?: return null
+        val (h, mi, se) = m.destructured
+        return (h.toLongOrNull() ?: 0) * 3600 + (mi.toLongOrNull() ?: 0) * 60 + (se.toLongOrNull() ?: 0)
     }
 
     private fun String.na(): String? = takeUnless { it.isBlank() || it == "NA" || it == "None" }
@@ -92,8 +150,62 @@ object Links {
 
     fun looksLikeLink(text: String): Boolean = extract(text) != null
 
+    fun isYouTube(link: String): Boolean {
+        val h = host(link).lowercase()
+        return h == "youtu.be" || h == "youtube.com" || h.endsWith(".youtube.com") || h.endsWith("youtube-nocookie.com")
+    }
+
+    /** "dc.example.co.kr" -> "example.co.kr", "www.instagram.com" -> "instagram.com" */
+    fun baseDomain(host: String): String {
+        val parts = host.lowercase().trim('.').split('.')
+        if (parts.size <= 2) return parts.joinToString(".")
+        val sld = parts[parts.size - 2]
+        val secondLevel = setOf("co", "com", "net", "org", "or", "go", "ac", "ne", "re", "gov", "edu", "pe", "kg", "es", "hs", "ms")
+        val n = if (parts.last().length == 2 && sld in secondLevel) 3 else 2
+        return parts.takeLast(n).joinToString(".")
+    }
+
     fun host(link: String): String =
         Regex("""^https?://([^/?#]+)""", RegexOption.IGNORE_CASE).find(link)?.groupValues?.get(1)?.removePrefix("www.") ?: link
+}
+
+/** Picks out the video streams a web page loads, so they can be downloaded when the page itself can't be read. */
+object Sniff {
+    private val manifest = Regex("""\.(m3u8|mpd)$""", RegexOption.IGNORE_CASE)
+    private val file = Regex("""\.(mp4|m4v|webm|mov|mkv|flv|3gp)$""", RegexOption.IGNORE_CASE)
+    // Pieces of a stream, not something to download on its own.
+    private val pieceParams = Regex("""[?&](bytestart|byteend|range)=[^&]*""", RegexOption.IGNORE_CASE)
+    private val skipHosts = listOf("googlevideo.com", "doubleclick.net", "googlesyndication.com", "googleadservices.com")
+
+    /** 2 for a stream playlist (best), 1 for a plain video file, null when it isn't a video. */
+    fun kind(url: String): Int? {
+        if (!url.startsWith("http", ignoreCase = true)) return null
+        val host = Links.host(url).lowercase()
+        if (skipHosts.any { host == it || host.endsWith(".$it") }) return null
+        val path = url.substringBefore('#').substringBefore('?')
+        return when {
+            manifest.containsMatchIn(path) -> 2
+            file.containsMatchIn(path) -> 1
+            url.contains(".m3u8?", ignoreCase = true) -> 2
+            else -> null
+        }
+    }
+
+    /** Drops byte-range parameters so the whole file is fetched. */
+    fun clean(url: String): String {
+        val cleaned = url.replace(pieceParams, "")
+        return if (!cleaned.contains('?') && cleaned.contains('&')) cleaned.replaceFirst('&', '?') else cleaned
+    }
+
+    /** Adds [url] to [seen] (newest first, streams before files), keeping at most [max]. */
+    fun add(seen: List<String>, url: String, max: Int = 12): List<String> {
+        val k = kind(url) ?: return seen
+        val u = clean(url)
+        val rest = seen.filterNot { it == u }
+        val streams = rest.filter { kind(it) == 2 }
+        val files = rest.filter { kind(it) != 2 }
+        return (if (k == 2) listOf(u) + streams + files else streams + listOf(u) + files).take(max)
+    }
 }
 
 /** yt-dlp's English errors turned into something a person can act on. */
@@ -128,6 +240,15 @@ object Errors {
             else -> "못 받았어요: " + e.take(200)
         }
     }
+}
+
+/** Errors that a logged-in browser session (cookies) might get past. */
+fun Errors.needsLogin(raw: String?): Boolean {
+    val l = raw?.lowercase() ?: return false
+    return listOf(
+        "login", "log in", "sign in", "cookies", "authentication", "private", "not a bot", "rate-limit",
+        "registered users", "members-only", "subscriber", "confirm your age", "age-restricted", "age restricted",
+    ).any { it in l }
 }
 
 /** Errors where trying again with the newest yt-dlp could help (a site changed), as opposed to private videos, no network... */

@@ -2,6 +2,7 @@ package io.github.apostolichiro.videodl.engine
 
 import android.content.Context
 import android.util.Log
+import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLException
@@ -31,11 +32,21 @@ object Engine {
             if (inited) return
             YoutubeDL.getInstance().init(ctx.applicationContext)
             FFmpeg.getInstance().init(ctx.applicationContext)
+            try {
+                Aria2c.getInstance().init(ctx.applicationContext)
+            } catch (e: Exception) {
+                Log.w(TAG, "aria2c unavailable, downloads use one connection", e)
+            }
             inited = true
         }
     }
 
     fun qjs(ctx: Context): File? = File(ctx.applicationInfo.nativeLibraryDir, "libqjs.so").takeIf { it.isFile }
+
+    private fun aria2c(ctx: Context): File? = File(ctx.applicationInfo.nativeLibraryDir, "libaria2c.so").takeIf { it.isFile }
+
+    /** The CA list that ships with the bundled Python; aria2c needs it for HTTPS. */
+    private fun caCerts(ctx: Context) = File(ctx.noBackupFilesDir, "${YoutubeDL.baseName}/packages/python/usr/etc/tls/cert.pem")
 
     private fun ytdlpFile(ctx: Context) =
         File(ctx.noBackupFilesDir, "${YoutubeDL.baseName}/${YoutubeDL.ytdlpDirName}/${YoutubeDL.ytdlpBin}")
@@ -87,35 +98,87 @@ object Engine {
         return true
     }
 
-    class Outcome(val files: List<File>, val error: String?, val cancelled: Boolean, val log: String?)
+    /** What to download and how. */
+    data class Request(
+        val url: String,
+        val quality: Quality,
+        /** Netscape cookie file exported from the in-app browser (for sites that need a login). */
+        val cookies: File? = null,
+        val referer: String? = null,
+        val userAgent: String? = null,
+        /** File name (without extension) for streams found on a page, which have no title of their own. */
+        val outName: String? = null,
+        /** Many connections at once via aria2c. Turned off for a retry if a site doesn't like it. */
+        val fast: Boolean = true,
+        /** Only the first video when the page turns out to be a list (the browser's "this video" button). */
+        val singleItem: Boolean = false,
+    )
 
     /**
-     * Downloads [url] into [workDir]. Finished files are listed by yt-dlp itself (after every
+     * [started] is true once bytes were being downloaded, i.e. finding the video worked
+     * and any failure happened in the download itself.
+     */
+    class Outcome(val files: List<File>, val error: String?, val cancelled: Boolean, val log: String?, val started: Boolean)
+
+    /**
+     * Downloads into [workDir]. Finished files are listed by yt-dlp itself (after every
      * merge/fix step), so whatever is returned is final and ready to be saved.
      */
-    fun download(ctx: Context, id: String, url: String, quality: Quality, workDir: File, onEvent: (Event) -> Unit): Outcome {
+    fun download(ctx: Context, id: String, r: Request, workDir: File, onEvent: (Event) -> Unit): Outcome {
         init(ctx)
         workDir.deleteRecursively()
         workDir.mkdirs()
         val list = File(workDir, ".files.txt")
-        val req = YoutubeDLRequest(url)
+        val req = YoutubeDLRequest(r.url)
         req.addOption("--cache-dir", File(ctx.filesDir, "yt-dlp-cache").absolutePath)
-        req.addCommands(baseArgs(ctx) + listOf(
+        val args = baseArgs(ctx).toMutableList()
+        args += listOf(
             "-P", workDir.absolutePath,
             "--print-to-file", "after_move:filepath", list.absolutePath,
-        ) + quality.options())
+            // The title as soon as it is known; --no-quiet keeps the progress lines coming.
+            "--no-quiet", "--print", Lines.itemTemplate,
+        )
+        args += r.quality.options()
+        if (r.fast && aria2c(ctx) != null) {
+            // Plain files (most YouTube/Instagram/TikTok formats) over 16 connections at once.
+            // Streams cut into pieces (HLS/DASH) keep yt-dlp's own downloader, 8 pieces at a time.
+            args += listOf(
+                "--downloader", "libaria2c.so",
+                "--downloader-args",
+                "aria2c:--ca-certificate=${caCerts(ctx).absolutePath} --summary-interval=1 --max-tries=5 --retry-wait=2 --connect-timeout=15 --timeout=30",
+            )
+        }
+        r.cookies?.let { args += listOf("--cookies", it.absolutePath) }
+        r.referer?.let { args += listOf("--referer", it) }
+        r.userAgent?.let { args += listOf("--user-agent", it) }
+        r.outName?.let { args += listOf("-o", outputName(it) + ".%(ext)s") }
+        if (r.singleItem) args += listOf("--playlist-items", "1")
+        req.addCommands(args)
+
+        var started = false
         return try {
-            YoutubeDL.getInstance().execute(req, id) { _, _, line -> Lines.parse(line)?.let(onEvent) }
-            Outcome(readList(list), null, false, null)
+            YoutubeDL.getInstance().execute(req, id) { _, _, line ->
+                Lines.parse(line)?.let { ev ->
+                    if (ev is Event.Part || ev is Event.Download) started = true
+                    onEvent(ev)
+                }
+            }
+            Outcome(readList(list), null, false, null, started)
         } catch (e: YoutubeDL.CanceledException) {
-            Outcome(emptyList(), null, true, null)
+            Outcome(emptyList(), null, true, null, started)
         } catch (e: YoutubeDLException) {
             Log.w(TAG, "yt-dlp failed: ${e.message?.takeLast(2000)}")
-            Outcome(readList(list), Errors.lastErrorLine(e.message) ?: e.message, false, e.message)
+            Outcome(readList(list), Errors.lastErrorLine(e.message) ?: e.message, false, e.message, started)
         } catch (e: InterruptedException) {
-            Outcome(emptyList(), null, true, null)
+            Outcome(emptyList(), null, true, null, started)
         }
     }
+
+    /** Makes a page title safe to use as yt-dlp's output name. */
+    fun outputName(title: String): String =
+        title.replace(Regex("""[\\/:*?"<>|\u0000-\u001f]"""), " ")
+            .replace(Regex("\\s+"), " ").trim().take(80).trim().ifEmpty { "video" }
+            .replace("%", "%%")
 
     fun cancel(id: String) {
         try {
@@ -140,7 +203,7 @@ object Engine {
             "--newline",
             // Keep "now" as the file date so it shows up on top in the gallery.
             "--no-mtime",
-            "--concurrent-fragments", "4",
+            "--concurrent-fragments", "8",
             "--retries", "5",
             "--fragment-retries", "10",
             "-o", "%(title,id).80B.%(ext)s",

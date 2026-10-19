@@ -41,7 +41,7 @@ object Notifs {
         return Intent.createChooser(send, "공유").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
-    fun progress(ctx: Context, title: String, text: String, percent: Int?, jobId: String?): Notification {
+    fun progress(ctx: Context, title: String, text: String, percent: Int?, jobId: String?, cancelAll: Boolean = false): Notification {
         val b = NotificationCompat.Builder(ctx, CH_PROGRESS)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle(title)
@@ -57,6 +57,12 @@ object Notifs {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             b.addAction(0, "취소", cancel)
+        } else if (cancelAll) {
+            val cancel = PendingIntent.getService(
+                ctx, 2, Intent(ctx, DownloadService::class.java).setAction(DownloadService.ACTION_CANCEL),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            b.addAction(0, "모두 취소", cancel)
         }
         return b.build()
     }

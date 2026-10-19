@@ -40,13 +40,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -102,18 +98,10 @@ class Actions(
 fun MainScreen(actions: Actions) {
     val jobs by Store.jobs.collectAsStateWithLifecycle()
     val engine by Store.engine.collectAsStateWithLifecycle()
-    val notice by Store.notice.collectAsStateWithLifecycle()
-    val snackbar = remember { SnackbarHostState() }
     var text by rememberSaveable { mutableStateOf("") }
     var quality by remember { mutableStateOf(Store.quality) }
     var detailOf by remember { mutableStateOf<Job?>(null) }
     val keyboard = LocalSoftwareKeyboardController.current
-
-    LaunchedEffect(notice) {
-        val n = notice ?: return@LaunchedEffect
-        Store.notice.value = null
-        snackbar.showSnackbar(n)
-    }
 
     fun submit() {
         val url = Links.extract(text) ?: return
@@ -122,12 +110,9 @@ fun MainScreen(actions: Actions) {
         keyboard?.hide()
     }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { pad ->
+    run {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(pad),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {

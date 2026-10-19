@@ -9,6 +9,15 @@ log() { echo "$*" | tee -a shots/result.txt; }
 shot() { adb exec-out screencap -p > "shots/$1.png"; }
 ui() { python3 tools/ui.py "$@" 2>&1 | tee -a shots/result.txt; return "${PIPESTATUS[0]}"; }
 # What a share sheet sends: a line of text with a link in it.
+# Waits until a file whose name contains $1 shows up in Download/영상다운로더.
+waitfile() {
+  local end=$((SECONDS + ${2:-120}))
+  while [ $SECONDS -lt $end ]; do
+    adb shell "ls /sdcard/Download/영상다운로더/" 2>/dev/null | grep -qF "$1" && return 0
+    sleep 3
+  done
+  return 1
+}
 share() { adb shell "am start -W -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '$1' -n $PKG/.MainActivity" >/dev/null; }
 
 adb install -r "$APK" >/dev/null && log "install: ok" || log "install: FAILED"
@@ -59,12 +68,42 @@ log "screen after youtube: $(adb shell cat /sdcard/ui.xml | grep -o 'text="[^"]\
 # 4) Open the finished video from the list.
 ui tap "보기" --exact >/dev/null && sleep 4 && shot 8_open && adb shell input keyevent KEYCODE_BACK
 
+# 5) In-app browser: a page whose player builds the stream address in JavaScript.
+ui tap "브라우저" --exact >/dev/null && log "browser tab: ok" || log "browser tab: FAILED"
+sleep 2
+shot 09_browser_home
+ui tap "주소나 검색어" >/dev/null || ui tapclass android.widget.EditText >/dev/null
+sleep 1
+adb shell input text "http://10.0.2.2:8000/js.html"
+adb shell input keyevent KEYCODE_ENTER
+sleep 8
+shot 10_browser_page
+ui wait "찾음" 15 >/dev/null && log "browser saw the stream: ok" || log "browser saw the stream: no"
+ui tap "이 영상 받기" >/dev/null && log "browser button: tapped" || log "browser button: FAILED"
+sleep 2
+shot 11_after_button
+waitfile "자바스크립트 영상" 150 && log "browser download: ok" || log "browser download: FAILED"
+
+# 6) The site's own download buttons: a video (goes through the engine) and a document (Android's downloader).
+ui tap "자료실로 가기" >/dev/null && log "site link: tapped" || log "site link: FAILED"
+sleep 5
+shot 12_site
+ui tap "영상 다운로드" >/dev/null && log "site video button: tapped" || log "site video button: FAILED"
+sleep 2
+shot 13_site_tapped
+waitfile "사이트 영상" 120 && log "site video download: ok" || log "site video download: FAILED"
+ui tap "문서 다운로드" >/dev/null
+waitfile "notes" 60 && log "site file download: ok" || log "site file download: FAILED"
+ui tap "받기" --exact >/dev/null
+sleep 3
+shot 14_list
+
 adb shell ls -la "/sdcard/Download/영상다운로더/" >> shots/result.txt 2>&1
 adb pull "/sdcard/Download/영상다운로더/vdl-test-output.mp4" test-output/engine-test.mp4 >/dev/null 2>&1 || true
 i=0
 adb shell "ls /sdcard/Download/영상다운로더/" | tr -d '\r' | while read -r f; do
   i=$((i + 1))
-  case "$f" in vdl-test-output.mp4) continue ;; esac
+  case "$f" in vdl-test-output.mp4|*.txt) continue ;; esac
   adb pull "/sdcard/Download/영상다운로더/$f" "test-output/app-$i.${f##*.}" >/dev/null 2>&1 || true
 done
 log "done"

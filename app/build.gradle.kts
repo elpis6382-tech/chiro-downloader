@@ -71,6 +71,8 @@ dependencies {
     val ytdl = "0.17.3"
     implementation("io.github.junkfood02.youtubedl-android:library:$ytdl")
     implementation("io.github.junkfood02.youtubedl-android:ffmpeg:$ytdl")
+    // Downloads one file over many connections at once.
+    implementation("io.github.junkfood02.youtubedl-android:aria2c:$ytdl")
 
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)

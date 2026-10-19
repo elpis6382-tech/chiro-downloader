@@ -60,12 +60,12 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
-      - name: Make the test web site (a page with an HLS video, a direct MP4 link)
+      - name: Make the test web site (HLS page, direct links, a JavaScript player, download buttons)
         run: bash tools/make_test_media.sh build/testmedia
 
       - name: Start the test web server
         run: |
-          nohup python3 -m http.server 8000 --directory build/testmedia > server.log 2>&1 &
+          nohup python3 tools/serve.py build/testmedia 8000 > server.log 2>&1 &
           sleep 2
           curl -sf http://127.0.0.1:8000/page.html > /dev/null && echo "test server is up"
 

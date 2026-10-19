@@ -58,10 +58,10 @@ class EngineTest {
         assertTrue("yt-dlp did not find QuickJS: $out", line.contains("quickjs-ng"))
     }
 
-    private fun download(url: String, q: Quality): Pair<Engine.Outcome, List<Event>> {
+    private fun download(url: String, q: Quality, fast: Boolean = true, outName: String? = null): Pair<Engine.Outcome, List<Event>> {
         val events = mutableListOf<Event>()
         val work = File(ctx.cacheDir, "test-${q.name}")
-        val outcome = Engine.download(ctx, "test-${System.nanoTime()}", url, q, work) { events += it }
+        val outcome = Engine.download(ctx, "test-${System.nanoTime()}", Engine.Request(url, q, fast = fast, outName = outName), work) { events += it }
         log("download $url ($q): files=${outcome.files.map { it.name }} error=${outcome.error}")
         if (outcome.error != null) log(outcome.log?.takeLast(3000) ?: "")
         return outcome to events
@@ -107,6 +107,30 @@ class EngineTest {
         assertTrue(f.name, f.name.endsWith(".m4a"))
         val head = f.readBytes().copyOfRange(4, 8)
         assertEquals("ftyp", String(head, Charsets.US_ASCII))
+    }
+
+    /** A plain file goes through aria2c (many connections); the result must be identical to the original. */
+    @Test
+    fun d2_directFileThroughAria2c() {
+        val (outcome, events) = download("$host/big.mp4", Quality.BEST, fast = true)
+        assertEquals(null, outcome.error)
+        val f = outcome.files.single()
+        log("aria2c: ${f.name} ${f.length()} bytes, ${events.count { it is Event.Download && !it.partKnown }} aria2c progress lines")
+        assertTrue("aria2c progress was not reported", events.any { it is Event.Download && !it.partKnown })
+        assertTrue("title not reported", events.any { it is Event.Item && it.title == "big" })
+        assertEquals(java.net.URL("$host/big.mp4").openConnection().contentLengthLong, f.length())
+        f.delete()
+    }
+
+    /** A stream address the browser saw, saved under the page's title. */
+    @Test
+    fun d3_sniffedStreamUsesThePageTitle() {
+        val (outcome, _) = download("$host/hls/index.m3u8", Quality.BEST, outName = "페이지 제목: 테스트/1")
+        assertEquals(null, outcome.error)
+        val f = outcome.files.single()
+        log("sniffed: ${f.name}")
+        assertEquals("페이지 제목 테스트 1.mp4", f.name)
+        f.delete()
     }
 
     @Test

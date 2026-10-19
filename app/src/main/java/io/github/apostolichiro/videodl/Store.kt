@@ -18,6 +18,9 @@ enum class Status { QUEUED, PREPARING, DOWNLOADING, PROCESSING, SAVING, DONE, FA
 
 data class SavedFile(val uri: String, val name: String, val mime: String, val size: Long)
 
+/** Where a download came from. */
+enum class Origin { LINK, BROWSER, SITE }
+
 data class Job(
     val id: String,
     val url: String,
@@ -35,6 +38,13 @@ data class Job(
     val files: List<SavedFile> = emptyList(),
     val error: String? = null,
     val detail: String? = null,
+    val origin: Origin = Origin.LINK,
+    /** The page the link was found on (browser downloads). */
+    val referer: String? = null,
+    val pageTitle: String? = null,
+    val userAgent: String? = null,
+    /** Video streams the browser saw the page play, tried when the page itself can't be read. */
+    val fallbacks: List<String> = emptyList(),
 )
 
 sealed interface EngineState {
@@ -55,8 +65,11 @@ object Store {
 
     val engine = MutableStateFlow<EngineState>(EngineState.Preparing)
 
-    /** A shared link that needs the person's attention (e.g. no link found in it). */
+    /** A short message for the person (shown at the bottom of the screen). */
     val notice = MutableStateFlow<String?>(null)
+
+    /** 0 = downloads, 1 = browser. */
+    val tab = MutableStateFlow(0)
 
     fun init(ctx: Context) {
         if (::prefs.isInitialized) return
@@ -81,8 +94,20 @@ object Store {
         get() = prefs.getBoolean("askedNotifications", false)
         set(v) = prefs.edit().putBoolean("askedNotifications", v).apply()
 
-    fun add(url: String, quality: Quality): Job {
-        val job = Job(id = UUID.randomUUID().toString(), url = url, quality = quality, createdAt = System.currentTimeMillis())
+    fun add(
+        url: String,
+        quality: Quality,
+        origin: Origin = Origin.LINK,
+        referer: String? = null,
+        pageTitle: String? = null,
+        userAgent: String? = null,
+        fallbacks: List<String> = emptyList(),
+    ): Job {
+        val job = Job(
+            id = UUID.randomUUID().toString(), url = url, quality = quality, createdAt = System.currentTimeMillis(),
+            origin = origin, referer = referer, pageTitle = pageTitle, userAgent = userAgent, fallbacks = fallbacks,
+            title = pageTitle,
+        )
         _jobs.update { listOf(job) + it }
         save()
         return job
@@ -114,6 +139,8 @@ object Store {
     /** Oldest waiting job first. */
     fun nextQueued(): Job? = _jobs.value.lastOrNull { it.status == Status.QUEUED }
 
+    fun activeCount(): Int = _jobs.value.count { it.status.active }
+
     fun hasWork(): Boolean = _jobs.value.any { it.status == Status.QUEUED || it.status.active }
 
     fun save() = synchronized(lock) {
@@ -144,6 +171,9 @@ object Store {
         put("id", id); put("url", url); put("quality", quality.name); put("createdAt", createdAt)
         put("status", status.name); title?.let { put("title", it) }; error?.let { put("error", it) }; detail?.let { put("detail", it) }
         count?.let { put("count", it) }
+        put("origin", origin.name); referer?.let { put("referer", it) }; pageTitle?.let { put("pageTitle", it) }
+        userAgent?.let { put("userAgent", it) }
+        if (fallbacks.isNotEmpty()) put("fallbacks", JSONArray(fallbacks))
         put("files", JSONArray().apply {
             files.forEach { f -> put(JSONObject().apply { put("uri", f.uri); put("name", f.name); put("mime", f.mime); put("size", f.size) }) }
         })
@@ -160,6 +190,11 @@ object Store {
                 val o = fa.getJSONObject(i)
                 SavedFile(o.getString("uri"), o.getString("name"), o.getString("mime"), o.optLong("size"))
             },
+            origin = runCatching { Origin.valueOf(optString("origin")) }.getOrDefault(Origin.LINK),
+            referer = optString("referer").ifEmpty { null },
+            pageTitle = optString("pageTitle").ifEmpty { null },
+            userAgent = optString("userAgent").ifEmpty { null },
+            fallbacks = optJSONArray("fallbacks")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
         )
     } catch (_: Exception) {
         null
