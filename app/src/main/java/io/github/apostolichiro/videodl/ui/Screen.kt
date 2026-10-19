@@ -96,6 +96,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -134,7 +135,7 @@ fun MainScreen(actions: Actions) {
         delay(400)
         preview = PreviewUi.Loading
         val pid = "info-" + System.nanoTime()
-        preview = try {
+        val result = try {
             coroutineScope {
                 val work = async(Dispatchers.IO) { Engine.info(ctx, link, pid) }
                 try {
@@ -149,6 +150,8 @@ fun MainScreen(actions: Actions) {
         } catch (e: Exception) {
             PreviewUi.Failed(Errors.korean(Errors.lastErrorLine(e.message) ?: e.message))
         }
+        // The link may have changed (or been cleared) while this was loading: don't show an old result.
+        if (isActive) preview = result
     }
     val doneCount = jobs.count { it.status == Status.DONE }
     val already by produceState<Job?>(null, link, quality, doneCount) {
