@@ -1,0 +1,62 @@
+name: devkit
+
+# Run by hand only: packs the libraries the app compiles against (plus android.jar) into a
+# "devkit" pre-release, so code can be type-checked without a full Android build.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  devkit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Collect the compile classpath
+        run: |
+          cat > /tmp/cp.gradle <<'G'
+          allprojects {
+            afterEvaluate { p ->
+              if (p.path == ':app') {
+                p.tasks.register('dumpClasspath') {
+                  doLast {
+                    def out = new File(p.rootDir, 'devkit/jars')
+                    out.mkdirs()
+                    def seen = [] as Set
+                    ['android-classes-jar', 'jar'].each { type ->
+                      def view = p.configurations.getByName('debugCompileClasspath').incoming.artifactView {
+                        lenient = true
+                        attributes { it.attribute(Attribute.of('artifactType', String), type) }
+                      }
+                      view.artifacts.each { a ->
+                        def id = a.id.componentIdentifier.displayName.replaceAll('[^A-Za-z0-9._-]', '_')
+                        if (seen.add(id)) {
+                          java.nio.file.Files.copy(a.file.toPath(), new File(out, id + '.jar').toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                          println "classpath: $id"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          G
+          ./gradlew --no-daemon -I /tmp/cp.gradle :app:dumpClasspath
+          cp "$ANDROID_HOME/platforms/android-35/android.jar" devkit/ || cp "$(ls -d $ANDROID_HOME/platforms/android-3* | tail -1)/android.jar" devkit/
+          ls devkit/jars | wc -l
+          du -sh devkit
+          tar czf devkit.tgz devkit
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete devkit --cleanup-tag -y || true
+          gh release create devkit devkit.tgz --prerelease --title devkit --notes "Compile classpath for local type checks (not an app release)."
