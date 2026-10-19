@@ -58,37 +58,37 @@ class Browser(activity: Activity, onSiteDownload: (url: String, userAgent: Strin
             }
 
             override fun onPageStarted(view: WebView, pageUrl: String, favicon: Bitmap?) {
-                url.value = pageUrl
-                found.value = emptyList()
-                canGoBack.value = view.canGoBack()
+                this@Browser.url.value = pageUrl
+                this@Browser.found.value = emptyList()
+                this@Browser.canGoBack.value = view.canGoBack()
             }
 
             override fun onPageFinished(view: WebView, pageUrl: String) {
-                url.value = view.url ?: pageUrl
-                title.value = view.title ?: ""
-                canGoBack.value = view.canGoBack()
+                this@Browser.url.value = view.url ?: pageUrl
+                this@Browser.title.value = view.title ?: ""
+                this@Browser.canGoBack.value = view.canGoBack()
                 CookieManager.getInstance().flush()
             }
 
             override fun doUpdateVisitedHistory(view: WebView, pageUrl: String, isReload: Boolean) {
                 // Single-page sites (YouTube, Instagram...) change the address without loading a new page.
-                url.value = pageUrl
-                canGoBack.value = view.canGoBack()
+                this@Browser.url.value = pageUrl
+                this@Browser.canGoBack.value = view.canGoBack()
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val u = request.url.toString()
-                if (Sniff.kind(u) != null) found.update { Sniff.add(it, u) }
+                if (Sniff.kind(u) != null) this@Browser.found.update { Sniff.add(it, u) }
                 return null
             }
         }
         webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) {
-                progress.value = newProgress
+                this@Browser.progress.value = newProgress
             }
 
             override fun onReceivedTitle(view: WebView, t: String?) {
-                title.value = t ?: ""
+                this@Browser.title.value = t ?: ""
             }
         }
         setDownloadListener { dlUrl, ua, disposition, mime, _ -> onSiteDownload(dlUrl, ua ?: settings.userAgentString, disposition, mime) }

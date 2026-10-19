@@ -70,7 +70,23 @@ jobs:
           curl -sf http://127.0.0.1:8000/page.html > /dev/null && echo "test server is up"
 
       - name: Unit tests, build app and device tests
-        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest 2>&1 | tee build.log
+
+      - name: Show build errors
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import re
+          lines = open('build.log', errors='replace').read().splitlines()
+          keep = []
+          for i, l in enumerate(lines):
+              if re.match(r'^e: ', l) or 'What went wrong' in l or re.search(r'\bFAILED\b', l) or 'AssertionError' in l:
+                  keep.extend(lines[i:i + 3])
+          msg = '\n'.join(keep[:120]) or '\n'.join(lines[-60:])
+          print('::error title=build::' + msg.replace('%', '%25').replace('\r', '').replace('\n', '%0A'))
+          PY
 
       - name: Enable KVM for the emulator
         run: |
