@@ -99,7 +99,8 @@ shot 12_site
 ui tap "영상 다운로드" >/dev/null && log "site video button: tapped" || log "site video button: FAILED"
 sleep 2
 shot 13_site_tapped
-waitfile "사이트 영상" 120 && log "site video download: ok" || log "site video download: FAILED"
+# WebView doesn't pass on the link's suggested name, so the file keeps its own name (clip.mp4).
+waitfile "clip.mp4" 120 && log "site video download: ok" || log "site video download: FAILED"
 ui tap "문서 다운로드" >/dev/null
 waitfile "notes" 60 && log "site file download: ok" || log "site file download: FAILED"
 ui tap "받기" --exact >/dev/null

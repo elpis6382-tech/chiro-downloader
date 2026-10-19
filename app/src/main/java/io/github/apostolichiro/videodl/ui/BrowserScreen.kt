@@ -86,15 +86,17 @@ fun BrowserScreen(browser: Browser, actions: BrowserActions) {
     val keyboard = LocalSoftwareKeyboardController.current
     var address by remember { mutableStateOf(url) }
     var editing by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     val home = url.isEmpty()
 
     LaunchedEffect(url, editing) { if (!editing) address = url }
     BackHandler { if (canGoBack) browser.webView.goBack() else actions.leave() }
 
+    // Only the keyboard is put away. Clearing focus instead would, on phones driven by a keyboard,
+    // hand focus straight back to the address box and pop the keyboard up again.
     fun go() {
-        // Put the keyboard away so the page can be seen and tapped.
         keyboard?.hide()
-        focus.clearFocus(force = true)
+        editing = false
         browser.open(address)
     }
 
@@ -102,7 +104,7 @@ fun BrowserScreen(browser: Browser, actions: BrowserActions) {
     LaunchedEffect(progress < 100) {
         if (progress < 100 && !home) {
             keyboard?.hide()
-            focus.clearFocus(force = true)
+            editing = false
         }
     }
 
@@ -117,8 +119,12 @@ fun BrowserScreen(browser: Browser, actions: BrowserActions) {
             ) { ArrowGlyph(14.dp, if (canGoBack) colors.onSurface else colors.outline) }
             OutlinedTextField(
                 value = if (editing) address else prettyAddress(address),
-                onValueChange = { address = it },
-                modifier = Modifier.weight(1f).onFocusChanged { editing = it.isFocused },
+                onValueChange = { address = it; editing = true },
+                modifier = Modifier.weight(1f).onFocusChanged { f ->
+                    // Show the full address while typing, the short one otherwise.
+                    if (f.isFocused != focused) editing = f.isFocused
+                    focused = f.isFocused
+                },
                 placeholder = { Text("주소나 검색어", maxLines = 1) },
                 singleLine = true,
                 shape = RoundedCornerShape(24.dp),
@@ -150,7 +156,7 @@ fun BrowserScreen(browser: Browser, actions: BrowserActions) {
                         quickSites.forEach { (name, link) ->
                             Box(
                                 Modifier.clip(RoundedCornerShape(14.dp)).background(colors.surface)
-                                    .clickable { keyboard?.hide(); focus.clearFocus(force = true); browser.open(link) }
+                                    .clickable { keyboard?.hide(); editing = false; browser.open(link) }
                                     .padding(horizontal = 16.dp, vertical = 12.dp),
                             ) { Text(name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium) }
                         }
