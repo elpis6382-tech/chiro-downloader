@@ -44,7 +44,7 @@ class LinesTest {
         val e = Lines.parse("[#0eada7 352KiB/57MiB(0%) CN:7 DL:356KiB ETA:2m43s]") as Event.Download
         assertEquals(352L * 1024, e.done)
         assertEquals(57L * 1024 * 1024, e.total)
-        assertEquals(356.0 * 1024, e.speed!!)
+        assertEquals(356.0 * 1024, e.speed!!, 0.5)
         assertEquals(163L, e.etaSec)
         assertEquals(false, e.partKnown)
         val unknown = Lines.parse("[#ab12cd 1.5MiB CN:1 DL:0B]") as Event.Download
