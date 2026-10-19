@@ -6,10 +6,11 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -195,7 +196,7 @@ private fun Header() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun InputCard(
     text: String,
@@ -215,7 +216,7 @@ private fun InputCard(
                 value = text,
                 onValueChange = onText,
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("영상 링크를 붙여넣으세요") },
+                placeholder = { Text("영상 링크", maxLines = 1) },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
@@ -232,7 +233,8 @@ private fun InputCard(
                 },
             )
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Wraps onto a second line on narrow phones instead of hiding options off-screen.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Quality.entries.forEach { q ->
                     FilterChip(selected = q == quality, onClick = { onQuality(q) }, label = { Text(q.label) })
                 }

@@ -34,7 +34,7 @@ ui wait "완료 ·" 1 >/dev/null && log "share page: ok" || log "share page: FAI
 
 # 2) Link box: pick 소리만 (audio only), type a direct link, press Enter (= 받기).
 ui tap "소리만" --exact >/dev/null
-ui tap "영상 링크를 붙여넣으세요" >/dev/null || ui tapclass android.widget.EditText >/dev/null
+ui tap "영상 링크" --exact >/dev/null || ui tapclass android.widget.EditText >/dev/null
 sleep 1
 adb shell input text "http://10.0.2.2:8000/clip.mp4"
 sleep 1

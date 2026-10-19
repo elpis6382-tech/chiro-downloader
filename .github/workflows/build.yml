@@ -18,7 +18,8 @@ env:
 
 jobs:
   build-test-release:
-    runs-on: ubuntu-latest
+    # Pinned: the "latest" label moves to a new Ubuntu, and the NDK/emulator setup is known to work here.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
