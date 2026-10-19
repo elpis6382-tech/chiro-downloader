@@ -75,6 +75,7 @@ import io.github.apostolichiro.videodl.EngineState
 import io.github.apostolichiro.videodl.Job
 import io.github.apostolichiro.videodl.R
 import io.github.apostolichiro.videodl.SavedFile
+import io.github.apostolichiro.videodl.Saver
 import io.github.apostolichiro.videodl.Status
 import io.github.apostolichiro.videodl.Store
 import io.github.apostolichiro.videodl.Texts
@@ -248,7 +249,7 @@ private fun HowTo() {
             Text("이렇게 쓰면 제일 편해요", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Step("1", "유튜브·인스타·틱톡·X 같은 앱에서 영상의 [공유]를 누르고")
             Step("2", "앱 목록에서 [영상 다운로더]를 고르면 바로 받기 시작해요.")
-            Step("3", "다 받은 영상은 갤러리의 영상다운로더 앨범(다운로드 폴더)에 있어요.")
+            Step("3", "다 받은 영상은 다운로드 폴더 안의 Chiro video 폴더(갤러리 앨범)에 있어요.")
         }
     }
 }
@@ -402,7 +403,7 @@ private fun EngineCard(engine: EngineState, onUpdate: () -> Unit) {
             }
             Text(line, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             Text(
-                "저장 위치: 내장 저장공간 › Download › 영상다운로더",
+                "저장 위치: 내장 저장공간 › Download › ${Saver.FOLDER}",
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
             )

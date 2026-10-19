@@ -1,6 +1,6 @@
 # 영상 다운로더
 
-링크만 넣으면 영상을 **진짜 MP4**로 받아서 폰의 `Download/영상다운로더` 폴더에 저장하는 안드로이드 앱.
+링크만 넣으면 영상을 **진짜 MP4**로 받아서 폰의 `Download/Chiro video` 폴더에 저장하는 안드로이드 앱.
 
 - 유튜브·인스타·틱톡·X·비메오 등 [yt-dlp가 지원하는 사이트](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) 전부, 그리고 영상이 들어 있는 일반 웹페이지
 - 다른 앱에서 **공유 → 영상 다운로더** 를 누르면 바로 받기 시작

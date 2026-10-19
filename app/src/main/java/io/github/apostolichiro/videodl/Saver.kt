@@ -9,9 +9,9 @@ import android.provider.MediaStore
 import java.io.File
 import java.io.IOException
 
-/** Puts finished files into Download/영상다운로더, where the gallery and file apps see them. */
+/** Puts finished files into Download/Chiro video, where the gallery and file apps see them. */
 object Saver {
-    const val FOLDER = "영상다운로더"
+    const val FOLDER = "Chiro video"
 
     fun mimeOf(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
         "mp4", "m4v" -> "video/mp4"

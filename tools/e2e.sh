@@ -5,15 +5,16 @@ set -u
 PKG=io.github.apostolichiro.videodl
 APK=app/build/outputs/apk/debug/app-x86_64-debug.apk
 mkdir -p shots test-output
+DIR="/sdcard/Download/Chiro video"
 log() { echo "$*" | tee -a shots/result.txt; }
 shot() { adb exec-out screencap -p > "shots/$1.png"; }
 ui() { python3 tools/ui.py "$@" 2>&1 | tee -a shots/result.txt; return "${PIPESTATUS[0]}"; }
 # What a share sheet sends: a line of text with a link in it.
-# Waits until a file whose name contains $1 shows up in Download/영상다운로더.
+# Waits until a file whose name contains $1 shows up in the app's download folder.
 waitfile() {
   local end=$((SECONDS + ${2:-120}))
   while [ $SECONDS -lt $end ]; do
-    adb shell "ls /sdcard/Download/영상다운로더/" 2>/dev/null | grep -qF "$1" && return 0
+    adb shell "ls '$DIR/'" 2>/dev/null | grep -qF "$1" && return 0
     sleep 3
   done
   return 1
@@ -107,13 +108,13 @@ ui tap "받기" --exact >/dev/null
 sleep 3
 shot 14_list
 
-adb shell ls -la "/sdcard/Download/영상다운로더/" >> shots/result.txt 2>&1
-adb pull "/sdcard/Download/영상다운로더/vdl-test-output.mp4" test-output/engine-test.mp4 >/dev/null 2>&1 || true
+adb shell "ls -la '$DIR/'" >> shots/result.txt 2>&1
+adb pull "$DIR/vdl-test-output.mp4" test-output/engine-test.mp4 >/dev/null 2>&1 || true
 i=0
-adb shell "ls /sdcard/Download/영상다운로더/" | tr -d '\r' | while read -r f; do
+adb shell "ls '$DIR/'" | tr -d '\r' | while read -r f; do
   i=$((i + 1))
   case "$f" in vdl-test-output.mp4|*.txt) continue ;; esac
-  adb pull "/sdcard/Download/영상다운로더/$f" "test-output/app-$i.${f##*.}" >/dev/null 2>&1 || true
+  adb pull "$DIR/$f" "test-output/app-$i.${f##*.}" >/dev/null 2>&1 || true
 done
 log "done"
 exit 0
