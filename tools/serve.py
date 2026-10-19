@@ -1,13 +1,20 @@
 """Static file server for the emulator tests that, like real video sites, supports byte ranges
 (so aria2c can really split a download over many connections) and many connections at once.
+Anything under /slow/ is the same file sent slowly (to have time to pause a download).
   python3 tools/serve.py DIR PORT
 """
-import os, re, sys
+import os, re, sys, time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 
 class RangeHandler(SimpleHTTPRequestHandler):
+    SLOW_BYTES_PER_SEC = 96 * 1024  # per connection
+
+    def translate_path(self, path):
+        self._slow = path.startswith('/slow/')
+        return super().translate_path(path[5:] if self._slow else path)
+
     def send_head(self):
         rng = self.headers.get('Range')
         path = self.translate_path(self.path)
@@ -36,14 +43,19 @@ class RangeHandler(SimpleHTTPRequestHandler):
 
     def copyfile(self, source, outputfile):
         left = getattr(self, '_remaining', None)
-        if left is None:
+        slow = getattr(self, '_slow', False)
+        if left is None and not slow:
             return super().copyfile(source, outputfile)
-        while left > 0:
-            chunk = source.read(min(65536, left))
+        step = 16384 if slow else 65536
+        while left is None or left > 0:
+            chunk = source.read(step if left is None else min(step, left))
             if not chunk:
                 break
             outputfile.write(chunk)
-            left -= len(chunk)
+            if left is not None:
+                left -= len(chunk)
+            if slow:
+                time.sleep(len(chunk) / self.SLOW_BYTES_PER_SEC)
         self._remaining = None
 
     def end_headers(self):

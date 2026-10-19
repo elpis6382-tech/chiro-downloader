@@ -21,8 +21,9 @@ object Notifs {
         nm.createNotificationChannel(NotificationChannel(CH_DONE, "다 받았을 때", NotificationManager.IMPORTANCE_DEFAULT))
     }
 
+    /** Opens the app on the "받는 중" tab. */
     private fun openApp(ctx: Context): PendingIntent = PendingIntent.getActivity(
-        ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra(MainActivity.EXTRA_TAB, Store.TAB_PROGRESS),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
@@ -52,16 +53,26 @@ object Notifs {
             .setContentIntent(openApp(ctx))
             .setProgress(100, percent ?: 0, percent == null)
         if (jobId != null) {
+            val pause = PendingIntent.getService(
+                ctx, 3, Intent(ctx, DownloadService::class.java).setAction(DownloadService.ACTION_PAUSE).putExtra(DownloadService.EXTRA_ID, jobId),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
             val cancel = PendingIntent.getService(
                 ctx, 1, Intent(ctx, DownloadService::class.java).setAction(DownloadService.ACTION_CANCEL).putExtra(DownloadService.EXTRA_ID, jobId),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
+            b.addAction(0, "일시정지", pause)
             b.addAction(0, "취소", cancel)
         } else if (cancelAll) {
+            val pause = PendingIntent.getService(
+                ctx, 4, Intent(ctx, DownloadService::class.java).setAction(DownloadService.ACTION_PAUSE),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
             val cancel = PendingIntent.getService(
                 ctx, 2, Intent(ctx, DownloadService::class.java).setAction(DownloadService.ACTION_CANCEL),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
+            b.addAction(0, "모두 일시정지", pause)
             b.addAction(0, "모두 취소", cancel)
         }
         return b.build()
@@ -69,9 +80,16 @@ object Notifs {
 
     fun finished(ctx: Context, job: Job) {
         val ok = job.status == Status.DONE
-        val tap = if (ok && job.files.size == 1) {
-            PendingIntent.getActivity(ctx, job.id.hashCode(), viewIntent(job.files[0]), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        } else openApp(ctx)
+        val first = job.files.firstOrNull()
+        val tap = when {
+            // Tapping "다 받았어요" plays it in the app's player.
+            ok && first != null && (first.isVideo || first.isAudio) -> PendingIntent.getActivity(
+                ctx, job.id.hashCode(), PlayerActivity.intent(ctx, job.files.filter { it.isVideo || it.isAudio }, 0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            ok && first != null -> PendingIntent.getActivity(ctx, job.id.hashCode(), viewIntent(first), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            else -> openApp(ctx)
+        }
         val n = NotificationCompat.Builder(ctx, CH_DONE)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle(if (ok) "다 받았어요" else "못 받았어요")

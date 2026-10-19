@@ -33,6 +33,14 @@
             </intent-filter>
         </activity>
 
+        <!-- The app's own player for downloaded videos and songs. -->
+        <activity
+            android:name=".PlayerActivity"
+            android:exported="false"
+            android:screenOrientation="fullUser"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|density"
+            android:theme="@style/Theme.VideoDl.Player" />
+
         <!-- "Share" a link from YouTube, Instagram, a browser...: download without opening the app. -->
         <activity
             android:name=".ShareActivity"

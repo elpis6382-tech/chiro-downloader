@@ -123,10 +123,11 @@ object Engine {
     /**
      * Downloads into [workDir]. Finished files are listed by yt-dlp itself (after every
      * merge/fix step), so whatever is returned is final and ready to be saved.
+     * With [fresh] = false the pieces of a paused download are kept and yt-dlp carries on where it stopped.
      */
-    fun download(ctx: Context, id: String, r: Request, workDir: File, onEvent: (Event) -> Unit): Outcome {
+    fun download(ctx: Context, id: String, r: Request, workDir: File, fresh: Boolean = true, onEvent: (Event) -> Unit): Outcome {
         init(ctx)
-        workDir.deleteRecursively()
+        if (fresh) workDir.deleteRecursively()
         workDir.mkdirs()
         val list = File(workDir, ".files.txt")
         val req = YoutubeDLRequest(r.url)
@@ -145,7 +146,9 @@ object Engine {
             args += listOf(
                 "--downloader", "libaria2c.so",
                 "--downloader-args",
-                "aria2c:--ca-certificate=${caCerts(ctx).absolutePath} --summary-interval=1 --max-tries=5 --retry-wait=2 --connect-timeout=15 --timeout=30",
+                // aria2c only splits files bigger than twice --min-split-size (20 MB by default); 1 MB pieces
+                // let ordinary videos use all 16 connections too.
+                "aria2c:--ca-certificate=${caCerts(ctx).absolutePath} --min-split-size=1M --summary-interval=1 --max-tries=5 --retry-wait=2 --connect-timeout=15 --timeout=30",
             )
         }
         r.cookies?.let { args += listOf("--cookies", it.absolutePath) }
@@ -175,12 +178,16 @@ object Engine {
     }
 
     /** Title, picture and formats of [url] without downloading anything (the link box preview). */
-    fun info(ctx: Context, url: String, pid: String): Preview {
+    fun info(ctx: Context, url: String, pid: String, cookies: File? = null, referer: String? = null, userAgent: String? = null): Preview {
         init(ctx)
         val req = YoutubeDLRequest(url)
         req.addOption("--cache-dir", File(ctx.filesDir, "yt-dlp-cache").absolutePath)
         // -J prints everything yt-dlp knows as JSON; a playlist only lists its videos instead of opening each.
-        req.addCommands(baseArgs(ctx) + listOf("-J", "--flat-playlist"))
+        val args = (baseArgs(ctx) + listOf("-J", "--flat-playlist")).toMutableList()
+        cookies?.let { args += listOf("--cookies", it.absolutePath) }
+        referer?.let { args += listOf("--referer", it) }
+        userAgent?.let { args += listOf("--user-agent", it) }
+        req.addCommands(args)
         val res = YoutubeDL.getInstance().execute(req, pid)
         return parsePreview(url, JSONObject(res.out))
     }
@@ -215,6 +222,36 @@ object Engine {
         try {
             YoutubeDL.getInstance().destroyProcessById(id)
         } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * Stopping yt-dlp leaves the programs it started (aria2c, ffmpeg) running on their own.
+     * They all work inside [dir], so anything of ours whose command line mentions it is ended too.
+     */
+    fun killLeftovers(dir: File) {
+        val marker = dir.absolutePath
+        val me = android.os.Process.myPid()
+        var killed = 0
+        File("/proc").listFiles()?.forEach { p ->
+            val pid = p.name.toIntOrNull() ?: return@forEach
+            if (pid == me) return@forEach
+            val cmd = try {
+                File(p, "cmdline").readBytes().toString(Charsets.UTF_8)
+            } catch (_: Exception) {
+                return@forEach
+            }
+            if (cmd.contains(marker)) {
+                try {
+                    android.os.Process.killProcess(pid)
+                    killed++
+                } catch (_: Exception) {
+                }
+            }
+        }
+        if (killed > 0) {
+            Log.i(TAG, "ended $killed leftover process(es) in ${dir.name}")
+            Thread.sleep(300)
         }
     }
 

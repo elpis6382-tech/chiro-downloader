@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#F3F4F9</color>
-    <color name="icon_bg">#3949AB</color>
+    <color name="bg">#FFFFFF</color>
+    <color name="icon_top">#5AB0FF</color>
+    <color name="icon_bottom">#2161E6</color>
 </resources>

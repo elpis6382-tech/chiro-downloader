@@ -22,7 +22,7 @@ sealed interface Event {
     }
 
     /** A video is about to be downloaded (printed once per video, also for each playlist item). */
-    data class Item(val title: String?, val index: Int?, val count: Int?) : Event
+    data class Item(val title: String?, val index: Int?, val count: Int?, val thumbnail: String? = null) : Event
 
     /** A file starts downloading: the single file, or the video/audio part of a video that gets merged. */
     data class Part(val audio: Boolean, val videoOnly: Boolean) : Event
@@ -48,7 +48,7 @@ object Lines {
     val postTemplate = "postprocess:$PP|%(progress.status)s|%(progress.postprocessor)s|%(info.title)s"
 
     /** For --print (with --no-quiet): the title as soon as the video is known, even when aria2c does the downloading. */
-    val itemTemplate = "before_dl:$IT|%(playlist_index)s|%(n_entries)s|%(title)s"
+    val itemTemplate = "before_dl:$IT|%(playlist_index)s|%(n_entries)s|%(thumbnail)s|%(title)s"
 
     // aria2c's once-a-second summary: [#0eada7 352KiB/57MiB(0%) CN:7 DL:356KiB ETA:2m43s]
     private val aria = Regex("""^\[#[0-9a-fA-F]+ ([\d.]+)([KMGT]?i?B)(?:/([\d.]+)([KMGT]?i?B)\((\d+)%\))?(?: CN:\d+)?(?: SD:\d+)?(?: DL:([\d.]+)([KMGT]?i?B))?(?: UL:\S+)?(?: ETA:([\dhms]+))?]""")
@@ -80,9 +80,12 @@ object Lines {
             )
         }
         if (l.startsWith("$IT|")) {
-            val f = l.split('|', limit = 4)
-            if (f.size < 4) return null
-            return Event.Item(title = f[3].na(), index = f[1].num()?.toInt(), count = f[2].num()?.toInt())
+            val f = l.split('|', limit = 5)
+            if (f.size < 5) return null
+            return Event.Item(
+                title = f[4].na(), index = f[1].num()?.toInt(), count = f[2].num()?.toInt(),
+                thumbnail = f[3].na()?.takeIf { it.startsWith("http") },
+            )
         }
         aria.find(l)?.let { m ->
             val g = m.groupValues

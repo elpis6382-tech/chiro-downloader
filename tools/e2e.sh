@@ -4,12 +4,12 @@
 set -u
 PKG=io.github.apostolichiro.videodl
 APK=app/build/outputs/apk/debug/app-x86_64-debug.apk
+MEDIA=build/testmedia
 mkdir -p shots test-output
 DIR="/sdcard/Download/Chiro video"
 log() { echo "$*" | tee -a shots/result.txt; }
 shot() { adb exec-out screencap -p > "shots/$1.png"; }
 ui() { python3 tools/ui.py "$@" 2>&1 | tee -a shots/result.txt; return "${PIPESTATUS[0]}"; }
-# What a share sheet sends: a line of text with a link in it.
 # Waits until a file whose name contains $1 shows up in the app's download folder.
 waitfile() {
   local end=$((SECONDS + ${2:-120}))
@@ -19,85 +19,47 @@ waitfile() {
   done
   return 1
 }
-# Sharing doesn't open the app any more (only a short message), so the app is opened afterwards to watch.
+# What a share sheet sends: a line of text with a link in it. Sharing doesn't open the app.
 share() {
   adb shell "am start -W -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '$1' -n $PKG/.ShareActivity" >/dev/null
   sleep 2
-  adb shell am start -W -n $PKG/.MainActivity >/dev/null
 }
+# Types an address into the browser's address bar and opens it.
+browse() {
+  ui tap "주소창" >/dev/null || ui tapclass android.widget.EditText >/dev/null
+  sleep 1
+  adb shell input text "$1"
+  adb shell input keyevent KEYCODE_ENTER
+}
+crashed() { adb shell pidof $PKG >/dev/null 2>&1 || { log "APP NOT RUNNING (crashed?) at: $1"; adb logcat -d -b crash | tail -40 >> shots/result.txt; adb shell am start -W -n $PKG/.MainActivity >/dev/null; sleep 3; }; }
 
 adb install -r "$APK" >/dev/null && log "install: ok" || log "install: FAILED"
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
+adb logcat -c
 
 adb shell am start -W -n $PKG/.MainActivity >/dev/null
-ui wait "영상 다운로더" 30 >/dev/null
+ui wait "검색하거나 주소 입력" 30 >/dev/null && log "home page: ok" || log "home page: FAILED"
 sleep 4
-shot 1_home
+shot 01_home
 
-# 1) Share a web page that has an HLS video on it.
+# 1) Share a web page that has an HLS video on it: downloads without opening the app.
 share "look at this http://10.0.2.2:8000/page.html"
-sleep 5
-shot 2_downloading
+adb shell am start -W -n $PKG/.MainActivity >/dev/null
+ui tap "받는 중" --exact >/dev/null
+sleep 3
+shot 02_progress
 adb shell cmd statusbar expand-notifications
 sleep 2
-shot 3_notification
+shot 03_notification
 adb shell cmd statusbar collapse
-ui wait "완료 ·||못 받았어요" 240 >/dev/null
-sleep 2
-shot 4_page_done
-ui wait "완료 ·" 1 >/dev/null && log "share page: ok" || log "share page: FAILED"
+waitfile "테스트 영상" 240 && log "share page: ok" || log "share page: FAILED"
+crashed "share"
 
-# 2) Link box: pick 소리만 (audio only), type a direct link, press Enter (= 받기).
-ui tap "소리만" --exact >/dev/null
-ui tap "영상 링크" --exact >/dev/null || ui tapclass android.widget.EditText >/dev/null
+# 2) Browser: open a direct video link, press the blue button, pick 소리만 in the sheet.
+ui tap "홈" --exact >/dev/null
 sleep 1
-adb shell input text "http://10.0.2.2:8000/clip.mp4"
-# The box shows a preview: the video's title ("clip") as its own line.
-ui wait "clip" 40 --exact >/dev/null && log "preview: ok" || log "preview: FAILED"
-shot 5_typed
-adb shell input keyevent KEYCODE_ENTER
-sleep 3
-ui wait "M4A||못 받았어요" 120 >/dev/null
-sleep 2
-shot 6_audio_done
-ui wait "M4A" 1 >/dev/null && log "audio only: ok" || log "audio only: FAILED"
-
-# 2b) The same link again: the app should say it's already downloaded instead of downloading twice.
-ui tap "영상 링크" --exact >/dev/null || ui tapclass android.widget.EditText >/dev/null
-sleep 1
-adb shell input text "http://10.0.2.2:8000/clip.mp4"
-ui wait "이미 받은 영상이에요" 40 >/dev/null && log "already-downloaded note: ok" || log "already-downloaded note: FAILED"
-adb shell input keyevent KEYCODE_ENTER
-sleep 2
-shot 6b_duplicate
-ui wait "그래도 받기" 10 >/dev/null && log "already-downloaded question: ok" || log "already-downloaded question: FAILED"
-adb shell input keyevent KEYCODE_BACK
-sleep 1
-
-# 3) A real site, for the record (data-center IPs are often blocked by big sites).
-ui tap "최고 화질" --exact >/dev/null
-share "https://www.youtube.com/watch?v=jNQXAC9IVRw"
-sleep 3
-ui gone "취소" 240 >/dev/null
-sleep 2
-shot 7_youtube
-adb shell uiautomator dump /sdcard/ui.xml >/dev/null
-log "screen after youtube: $(adb shell cat /sdcard/ui.xml | grep -o 'text="[^"]\+"' | head -14 | tr '\n' ' ')"
-
-# 4) Open the finished video from the list.
-ui tap "보기" --exact >/dev/null && sleep 4 && shot 8_open && adb shell input keyevent KEYCODE_BACK
-
-# 5) In-app browser: a page whose player builds the stream address in JavaScript.
-ui tap "브라우저" --exact >/dev/null && log "browser tab: ok" || log "browser tab: FAILED"
-sleep 2
-shot 09_browser_home
-ui tap "주소나 검색어" >/dev/null || ui tapclass android.widget.EditText >/dev/null
-sleep 1
-adb shell input text "http://10.0.2.2:8000/js.html"
-adb shell input keyevent KEYCODE_ENTER
-sleep 8
-shot 10_browser_page
-# The app should put the keyboard away by itself once the page opens.
+browse "10.0.2.2:8000/clip.mp4"
+sleep 6
 if adb shell dumpsys input_method | grep -q "mInputShown=true"; then
   log "keyboard after opening page: STILL UP"
   adb shell input keyevent KEYCODE_BACK
@@ -105,35 +67,106 @@ if adb shell dumpsys input_method | grep -q "mInputShown=true"; then
 else
   log "keyboard after opening page: hidden (ok)"
 fi
-ui wait "찾음" 15 >/dev/null && log "browser saw the stream: ok" || log "browser saw the stream: no"
-ui tap "이 영상 받기" >/dev/null && log "browser button: tapped" || log "browser button: FAILED"
-sleep 2
-shot 11_after_button
-waitfile "자바스크립트 영상" 150 && log "browser download: ok" || log "browser download: FAILED"
+shot 04_browser_clip
+ui tap "이 페이지 영상 받기" >/dev/null && log "download button: tapped" || log "download button: FAILED"
+ui wait "clip" 40 --exact >/dev/null && log "sheet preview: ok" || log "sheet preview: FAILED"
+sleep 1
+shot 05_sheet
+ui tap "소리만" --exact >/dev/null
+sleep 1
+shot 05b_sheet_audio
+ui tap "다운로드" --exact >/dev/null
+waitfile "clip.m4a" 120 && log "sheet audio download: ok" || log "sheet audio download: FAILED"
+crashed "sheet"
 
-# 6) The site's own download buttons: a video (goes through the engine) and a document (Android's downloader).
+# 2b) The same video again: the sheet says it's already downloaded.
+ui tap "이 페이지 영상 받기" >/dev/null
+ui tap "소리만" --exact >/dev/null
+ui wait "이미 받은 영상이에요" 20 >/dev/null && log "already-downloaded note: ok" || log "already-downloaded note: FAILED"
+shot 06_sheet_dup
+adb shell input keyevent KEYCODE_BACK
+sleep 1
+
+# 3) A page whose player builds the stream address in JavaScript: the button lights up once it plays.
+browse "10.0.2.2:8000/js.html"
+sleep 8
+shot 07_js_page
+ui tap "이 페이지 영상 받기" >/dev/null
+ui wait "스트리밍 영상 1||영상 파일 1" 40 >/dev/null && log "page streams listed: ok" || log "page streams listed: FAILED"
+sleep 2
+shot 08_js_sheet
+ui tap "받기" --exact >/dev/null && log "stream button: tapped" || log "stream button: FAILED"
+waitfile "자바스크립트 영상" 150 && log "stream download (page title): ok" || log "stream download (page title): FAILED"
+crashed "stream"
+
+# 4) The site's own download buttons: a video (goes through the engine) and a document (Android's downloader).
 ui tap "자료실로 가기" >/dev/null && log "site link: tapped" || log "site link: FAILED"
 sleep 5
-shot 12_site
+shot 09_site
 ui tap "영상 다운로드" >/dev/null && log "site video button: tapped" || log "site video button: FAILED"
-sleep 2
-shot 13_site_tapped
 # WebView doesn't pass on the link's suggested name, so the file keeps its own name (clip.mp4).
 waitfile "clip.mp4" 120 && log "site video download: ok" || log "site video download: FAILED"
 ui tap "문서 다운로드" >/dev/null
 waitfile "notes" 60 && log "site file download: ok" || log "site file download: FAILED"
-ui tap "받기" --exact >/dev/null
-sleep 3
-shot 14_list
 
-# 7) Search the list.
-ui tap "받은 목록 검색" >/dev/null && log "search box: ok" || log "search box: FAILED"
-sleep 1
-adb shell input text "clip"
+# 5) Tabs: open a second one.
+ui tap "탭 1개" >/dev/null && sleep 2 && shot 10_tabs
+ui tap "새 탭" --exact >/dev/null
 sleep 2
-shot 15_search
-if ui gone "자바스크립트 영상" 5 >/dev/null && ui wait "clip" 5 --exact >/dev/null; then log "search: ok"; else log "search: FAILED"; fi
+ui wait "탭 2개" 10 >/dev/null && log "tabs: ok" || log "tabs: FAILED"
+shot 11_new_tab
+crashed "tabs"
 
+# 6) Pause and go on: a slow download is paused half-way, then finished; the file must be exact.
+share "http://10.0.2.2:8000/slow/big.mp4"
+adb shell am start -W -n $PKG/.MainActivity >/dev/null
+ui tap "받는 중" --exact >/dev/null
+ui wait "MB /" 90 >/dev/null
+sleep 3
+shot 12_before_pause
+ui tap "일시정지" --exact >/dev/null && log "pause button: tapped" || log "pause button: FAILED"
+ui wait "이어받기" 20 --exact >/dev/null && log "paused: ok" || log "paused: FAILED"
+sleep 2
+shot 13_paused
+ui tap "이어받기" --exact >/dev/null
+if waitfile "big" 240; then
+  sleep 3
+  want=$(md5sum "$MEDIA/big.mp4" | cut -d' ' -f1)
+  got=$(adb shell "md5sum '$DIR/big.mp4'" | cut -d' ' -f1)
+  [ "$want" = "$got" ] && log "resume: ok (file identical)" || log "resume: FAILED (file differs: $want vs $got)"
+else
+  log "resume: FAILED (never finished)"
+fi
+shot 14_after_resume
+crashed "pause"
+
+# 7) Files: the list, then the built-in player.
+ui tap "파일" --exact >/dev/null
+sleep 2
+shot 15_files
+ui wait "테스트 영상" 10 >/dev/null && log "files list: ok" || log "files list: FAILED"
+ui tap "테스트 영상" >/dev/null
+ui wait "재생 위치" 15 >/dev/null && log "player: ok" || log "player: FAILED"
+sleep 3
+shot 16_player
+adb shell input tap 300 600
+sleep 1
+shot 17_player_controls
+crashed "player"
+adb shell input keyevent KEYCODE_BACK
+sleep 2
+
+# 8) Settings, and the home page with recent downloads.
+ui tap "설정" --exact >/dev/null
+ui wait "광고·팝업 차단" 10 >/dev/null && log "settings: ok" || log "settings: FAILED"
+shot 18_settings
+ui tap "홈" --exact >/dev/null
+sleep 2
+shot 19_home_recent
+ui wait "최근 받은 영상" 10 >/dev/null && log "home recent: ok" || log "home recent: FAILED"
+crashed "end"
+
+adb logcat -d -b crash > shots/crash.log 2>/dev/null || true
 adb shell "ls -la '$DIR/'" >> shots/result.txt 2>&1
 adb pull "$DIR/vdl-test-output.mp4" test-output/engine-test.mp4 >/dev/null 2>&1 || true
 i=0

@@ -60,8 +60,8 @@ class LinesTest {
 
     @Test
     fun parsesItemsAndParts() {
-        assertEquals(Event.Item("제목 | 부제", 2, 7), Lines.parse("@@T|2|7|제목 | 부제"))
-        assertEquals(Event.Item("영상", null, null), Lines.parse("@@T|NA|NA|영상"))
+        assertEquals(Event.Item("제목 | 부제", 2, 7, "https://i.ytimg.com/vi/x/hq.jpg"), Lines.parse("@@T|2|7|https://i.ytimg.com/vi/x/hq.jpg|제목 | 부제"))
+        assertEquals(Event.Item("영상", null, null), Lines.parse("@@T|NA|NA|NA|영상"))
         assertEquals(Event.Part(audio = false, videoOnly = true), Lines.parse("[download] Destination: /x/고양이.f137.mp4"))
         assertEquals(Event.Part(audio = true, videoOnly = false), Lines.parse("[download] Destination: /x/고양이.f140.m4a"))
         assertEquals(Event.Part(audio = false, videoOnly = false), Lines.parse("[download] Destination: /x/clip.mp4"))

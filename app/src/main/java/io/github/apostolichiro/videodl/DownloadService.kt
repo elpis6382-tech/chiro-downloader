@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Works through the download list in the foreground (so it keeps going with the screen off),
- * up to [MAX_PARALLEL] links at the same time.
+ * up to [Store.maxParallel] links at the same time.
  */
 class DownloadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -42,9 +42,10 @@ class DownloadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Store.init(this)
         Notifs.ensureChannels(this)
-        if (intent?.action == ACTION_CANCEL) {
+        if (intent?.action == ACTION_CANCEL || intent?.action == ACTION_PAUSE) {
             val id = intent.getStringExtra(EXTRA_ID)
-            if (id != null) cancel(id) else Store.jobs.value.filter { it.status == Status.QUEUED || it.status.active }.forEach { cancel(it.id) }
+            val stop: (String) -> Unit = if (intent.action == ACTION_PAUSE) ::pause else ::cancel
+            if (id != null) stop(id) else Store.jobs.value.filter { it.status == Status.QUEUED || it.status.active }.forEach { stop(it.id) }
             synchronized(lock) { if (running.isEmpty()) stopSelfResult(startId) }
             return START_NOT_STICKY
         }
@@ -74,10 +75,10 @@ class DownloadService : Service() {
         wakeLock = null
     }
 
-    /** Starts waiting jobs until [MAX_PARALLEL] run at once; stops the service when nothing is left. */
+    /** Starts waiting jobs until [Store.maxParallel] run at once; stops the service when nothing is left. */
     private fun pump() {
         synchronized(lock) {
-            while (running.size < MAX_PARALLEL) {
+            while (running.size < Store.maxParallel) {
                 val job = Store.nextQueued() ?: break
                 running += job.id
                 // Claim it right away so it isn't picked twice.
@@ -106,6 +107,7 @@ class DownloadService : Service() {
         val id = job.id
         val work = File(cacheDir, "dl/$id")
         val cookieFile = File(cacheDir, "dl/$id.cookies")
+        var keepWork = false
         try {
             try {
                 Engine.init(this)
@@ -119,6 +121,10 @@ class DownloadService : Service() {
                 notifyProgress(force = true)
                 App.updateEngine(this, DAY)
             }
+            if (isPaused(id)) {
+                keepWork = true
+                return markPaused(id)
+            }
             if (isCancelled(id)) return markCancelled(id)
 
             val youtube = Links.isYouTube(job.url)
@@ -131,13 +137,21 @@ class DownloadService : Service() {
                 cookies = firstCookies,
                 referer = job.referer,
                 userAgent = if (youtube) null else job.userAgent,
-                outName = if (job.origin == Origin.SITE) job.pageTitle?.substringBeforeLast('.') else null,
+                outName = when (job.origin) {
+                    Origin.SITE -> job.pageTitle?.substringBeforeLast('.')
+                    // A stream has no title of its own: it is saved under the page's.
+                    Origin.STREAM -> job.pageTitle ?: job.title ?: "video"
+                    else -> null
+                },
                 singleItem = job.origin == Origin.BROWSER,
             )
-            var fromFallback = false
+            // Streams keep the page's title instead of whatever name the stream file has.
+            var fromFallback = job.origin == Origin.STREAM
             var nextFallback = 0
             var updated = false
-            var outcome = runDownload(job, req, work, fromFallback)
+            // A paused download carries on with the pieces it already has; any later attempt starts clean
+            // (a file aria2c left half-written must not be continued by another downloader).
+            var outcome = runDownload(job, req, work, fromFallback, fresh = !job.resume)
             var attempts = 1
             while (outcome.files.isEmpty() && outcome.error != null && !outcome.cancelled && !isCancelled(id) && attempts < 6) {
                 val err = outcome.error
@@ -174,9 +188,14 @@ class DownloadService : Service() {
                 }
                 if (next == null || isCancelled(id)) break
                 req = next
-                Store.update(id) { it.copy(status = Status.PREPARING, step = null, progress = null, speed = null, etaSec = null) }
-                outcome = runDownload(job, req, work, fromFallback)
+                Store.update(id) { it.copy(status = Status.PREPARING, step = null, progress = null, speed = null, etaSec = null, doneBytes = null, totalBytes = null) }
+                outcome = runDownload(job, req, work, fromFallback, fresh = true)
                 attempts++
+            }
+            if (outcome.cancelled || isCancelled(id)) Engine.killLeftovers(work)
+            if (isPaused(id)) {
+                keepWork = true
+                return markPaused(id)
             }
             if (outcome.cancelled || isCancelled(id)) return markCancelled(id)
             if (outcome.files.isEmpty()) {
@@ -202,28 +221,32 @@ class DownloadService : Service() {
             val partial = outcome.error ?: saveError
             Store.update(id, persist = true) {
                 it.copy(
-                    status = Status.DONE, files = saved, progress = 1f, speed = null, etaSec = null, step = null,
+                    status = Status.DONE, files = saved, progress = 1f, speed = null, etaSec = null, step = null, resume = false,
                     error = partial?.let { p -> "일부는 못 받았어요. " + Errors.korean(p) },
                     detail = outcome.log?.takeLast(6000),
                 )
             }
             Store.get(id)?.let { Notifs.finished(this, it) }
         } finally {
-            work.deleteRecursively()
+            if (!keepWork) work.deleteRecursively()
             cookieFile.delete()
             cancelRequested.remove(id)
+            pauseRequested.remove(id)
         }
     }
 
-    private fun runDownload(job: Job, req: Engine.Request, work: File, fromFallback: Boolean): Engine.Outcome {
+    private fun runDownload(job: Job, req: Engine.Request, work: File, fromFallback: Boolean, fresh: Boolean): Engine.Outcome {
         val id = job.id
         Store.update(id) { it.copy(step = null) }
         notifyProgress(force = true)
-        return Engine.download(this, id, req, work) { ev ->
+        return Engine.download(this, id, req, work, fresh) { ev ->
             when (ev) {
                 is Event.Looking -> Unit
                 is Event.Item -> Store.update(id) {
-                    it.copy(title = if (fromFallback) it.title else ev.title ?: it.title, index = ev.index, count = ev.count)
+                    it.copy(
+                        title = if (fromFallback) it.title else ev.title ?: it.title, index = ev.index, count = ev.count,
+                        thumbnail = it.thumbnail ?: ev.thumbnail,
+                    )
                 }
                 is Event.Part -> Store.update(id) {
                     it.copy(
@@ -240,6 +263,8 @@ class DownloadService : Service() {
                         status = Status.DOWNLOADING,
                         title = if (fromFallback) it.title else ev.title ?: it.title,
                         progress = ev.fraction ?: it.progress.takeIf { _ -> ev.total == null && it.status == Status.DOWNLOADING },
+                        doneBytes = ev.done ?: it.doneBytes,
+                        totalBytes = ev.total ?: it.totalBytes.takeIf { _ -> ev.done != null && it.status == Status.DOWNLOADING },
                         speed = ev.speed,
                         etaSec = ev.etaSec,
                         step = if (!ev.partKnown) it.step else when {
@@ -268,7 +293,15 @@ class DownloadService : Service() {
     }
 
     private fun markCancelled(id: String) {
-        Store.update(id, persist = true) { it.copy(status = Status.CANCELLED, progress = null, speed = null, etaSec = null, step = null) }
+        if (Store.removeAfterStop.remove(id)) {
+            Store.remove(id)
+            return
+        }
+        Store.update(id, persist = true) { it.copy(status = Status.CANCELLED, progress = null, speed = null, etaSec = null, step = null, resume = false) }
+    }
+
+    private fun markPaused(id: String) {
+        Store.update(id, persist = true) { it.copy(status = Status.PAUSED, speed = null, etaSec = null, step = null, resume = true) }
     }
 
     /** One notification for everything that's running. */
@@ -308,25 +341,46 @@ class DownloadService : Service() {
 
     companion object {
         const val ACTION_CANCEL = "io.github.apostolichiro.videodl.CANCEL"
+        const val ACTION_PAUSE = "io.github.apostolichiro.videodl.PAUSE"
         const val EXTRA_ID = "id"
-        const val MAX_PARALLEL = 3
         private const val HOUR = 60 * 60 * 1000L
         private const val DAY = 24 * HOUR
         private val cancelRequested: MutableSet<String> = ConcurrentHashMap.newKeySet<String>()
+        private val pauseRequested: MutableSet<String> = ConcurrentHashMap.newKeySet<String>()
 
         fun start(ctx: Context) {
             ContextCompat.startForegroundService(ctx, Intent(ctx, DownloadService::class.java))
         }
 
-        fun isCancelled(id: String) = id in cancelRequested
+        /** Stopped for good, or paused: either way the running yt-dlp is ended. */
+        fun isCancelled(id: String) = id in cancelRequested || id in pauseRequested
+
+        fun isPaused(id: String) = id in pauseRequested
 
         /** Stops a running download, or takes a waiting one off the list. */
         fun cancel(id: String) {
             val job = Store.get(id) ?: return
             when {
-                job.status == Status.QUEUED -> Store.update(id, persist = true) { it.copy(status = Status.CANCELLED) }
+                job.status == Status.QUEUED || job.status == Status.PAUSED -> {
+                    if (Store.removeAfterStop.remove(id)) Store.remove(id)
+                    else Store.update(id, persist = true) { it.copy(status = Status.CANCELLED, resume = false) }
+                }
                 job.status.active -> {
+                    pauseRequested -= id
                     cancelRequested += id
+                    Engine.cancel(id)
+                }
+            }
+        }
+
+        /** Stops a download but keeps what it already has, to go on later. */
+        fun pause(id: String) {
+            val job = Store.get(id) ?: return
+            when {
+                job.status == Status.QUEUED -> Store.update(id, persist = true) { it.copy(status = Status.PAUSED) }
+                // Saving into the Download folder takes a moment and can't be split; let it finish.
+                job.status.active && job.status != Status.SAVING -> {
+                    pauseRequested += id
                     Engine.cancel(id)
                 }
             }
