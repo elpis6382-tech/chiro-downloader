@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+# QuickJS-NG is compiled for Android in CI (see .github/workflows/build.yml)
+app/src/main/jniLibs/
+# test media and outputs made in CI
+shots/
+test-output/
+*.log

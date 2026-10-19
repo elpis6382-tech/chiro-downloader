@@ -1,0 +1,448 @@
+package io.github.apostolichiro.videodl.ui
+
+import android.net.Uri
+import android.util.Size
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.apostolichiro.videodl.DownloadService
+import io.github.apostolichiro.videodl.EngineState
+import io.github.apostolichiro.videodl.Job
+import io.github.apostolichiro.videodl.R
+import io.github.apostolichiro.videodl.SavedFile
+import io.github.apostolichiro.videodl.Status
+import io.github.apostolichiro.videodl.Store
+import io.github.apostolichiro.videodl.Texts
+import io.github.apostolichiro.videodl.engine.Engine
+import io.github.apostolichiro.videodl.engine.Links
+import io.github.apostolichiro.videodl.engine.Quality
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+class Actions(
+    val download: (String, Quality) -> Unit,
+    val readClipboard: () -> String?,
+    val updateEngine: () -> Unit,
+    val open: (SavedFile) -> Unit,
+    val share: (List<SavedFile>) -> Unit,
+    val retry: (String) -> Unit,
+    val copy: (String) -> Unit,
+)
+
+@Composable
+fun MainScreen(actions: Actions) {
+    val jobs by Store.jobs.collectAsStateWithLifecycle()
+    val engine by Store.engine.collectAsStateWithLifecycle()
+    val notice by Store.notice.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    var text by rememberSaveable { mutableStateOf("") }
+    var quality by remember { mutableStateOf(Store.quality) }
+    var detailOf by remember { mutableStateOf<Job?>(null) }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(notice) {
+        val n = notice ?: return@LaunchedEffect
+        Store.notice.value = null
+        snackbar.showSnackbar(n)
+    }
+
+    fun submit() {
+        val url = Links.extract(text) ?: return
+        actions.download(url, quality)
+        text = ""
+        keyboard?.hide()
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { pad ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(pad),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item(key = "head") { Header() }
+            item(key = "input") {
+                InputCard(
+                    text = text,
+                    onText = { text = it },
+                    quality = quality,
+                    onQuality = { quality = it; Store.quality = it },
+                    onPaste = {
+                        val clip = actions.readClipboard()
+                        val link = Links.extract(clip)
+                        if (link != null) text = link else Store.notice.value = "복사한 내용에 링크가 없어요."
+                    },
+                    onSubmit = { submit() },
+                )
+            }
+            if (jobs.isEmpty()) {
+                item(key = "empty") { HowTo() }
+            } else {
+                item(key = "listhead") {
+                    Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("받은 목록", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        if (jobs.any { it.status == Status.DONE }) {
+                            TextButton(onClick = { Store.clearFinished() }) { Text("완료된 것 지우기") }
+                        }
+                    }
+                }
+            }
+            items(jobs, key = { it.id }) { job ->
+                JobCard(job, actions, onDetail = { detailOf = it })
+            }
+            item(key = "engine") { EngineCard(engine, actions.updateEngine) }
+        }
+    }
+
+    detailOf?.let { job ->
+        val detail = job.detail ?: ""
+        AlertDialog(
+            onDismissRequest = { detailOf = null },
+            confirmButton = { TextButton(onClick = { detailOf = null }) { Text("닫기") } },
+            dismissButton = { TextButton(onClick = { actions.copy(job.url + "\n\n" + detail) }) { Text("복사") } },
+            title = { Text("자세한 기록") },
+            text = {
+                Box(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                    SelectionContainer {
+                        Text(detail.ifBlank { "기록이 없어요." }, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp)
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun Header() {
+    Column(Modifier.padding(horizontal = 4.dp)) {
+        Text("영상 다운로더", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            "링크만 넣으면 MP4로 받아서 다운로드 폴더에 저장해요.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InputCard(
+    text: String,
+    onText: (String) -> Unit,
+    quality: Quality,
+    onQuality: (Quality) -> Unit,
+    onPaste: () -> Unit,
+    onSubmit: () -> Unit,
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = onText,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("영상 링크를 붙여넣으세요") },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { onSubmit() }),
+                trailingIcon = {
+                    if (text.isEmpty()) {
+                        TextButton(onClick = onPaste) { Text("붙여넣기") }
+                    } else {
+                        Box(
+                            Modifier.size(40.dp).clip(CircleShape).clickable { onText("") },
+                            contentAlignment = Alignment.Center,
+                        ) { CrossGlyph(12.dp, MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                },
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Quality.entries.forEach { q ->
+                    FilterChip(selected = q == quality, onClick = { onQuality(q) }, label = { Text(q.label) })
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = onSubmit,
+                enabled = Links.looksLikeLink(text),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text("받기", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HowTo() {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("이렇게 쓰면 제일 편해요", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Step("1", "유튜브·인스타·틱톡·X 같은 앱에서 영상의 [공유]를 누르고")
+            Step("2", "앱 목록에서 [영상 다운로더]를 고르면 바로 받기 시작해요.")
+            Step("3", "다 받은 영상은 갤러리의 영상다운로더 앨범(다운로드 폴더)에 있어요.")
+        }
+    }
+}
+
+@Composable
+private fun Step(n: String, text: String) {
+    Row(verticalAlignment = Alignment.Top) {
+        Box(
+            Modifier.size(22.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center,
+        ) { Text(n, color = MaterialTheme.colorScheme.onPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+        Spacer(Modifier.width(10.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+    }
+}
+
+@Composable
+private fun JobCard(job: Job, actions: Actions, onDetail: (Job) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(start = 12.dp, top = 12.dp, end = 4.dp, bottom = 4.dp)) {
+            Thumb(job)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Text(
+                        Texts.title(job),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(top = 2.dp, end = 4.dp),
+                    )
+                    if (job.status.finished) {
+                        Box(
+                            Modifier.size(32.dp).clip(CircleShape).clickable { Store.remove(job.id) },
+                            contentAlignment = Alignment.Center,
+                        ) { CrossGlyph(10.dp, colors.onSurfaceVariant) }
+                    }
+                }
+                Text(
+                    "${Links.host(job.url)} · ${job.quality.label}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    Texts.status(job),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when {
+                        job.status == Status.FAILED -> colors.error
+                        job.status == Status.DONE && job.error == null -> colors.tertiary
+                        job.status == Status.DONE -> colors.error
+                        else -> colors.onSurfaceVariant
+                    },
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                if (job.status == Status.DONE && job.error != null) {
+                    Text(job.error, style = MaterialTheme.typography.bodySmall, color = colors.error, modifier = Modifier.padding(end = 8.dp))
+                }
+                if (job.status.active) {
+                    Spacer(Modifier.height(8.dp))
+                    val p = job.progress
+                    if (p != null && job.status == Status.DOWNLOADING) {
+                        LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth().padding(end = 8.dp))
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(end = 8.dp))
+                    }
+                }
+                Row {
+                    when {
+                        job.status == Status.QUEUED || job.status.active -> {
+                            TextButton(onClick = { DownloadService.cancel(job.id) }) { Text("취소") }
+                        }
+                        job.status == Status.DONE -> {
+                            if (job.files.size == 1) TextButton(onClick = { actions.open(job.files[0]) }) { Text("보기") }
+                            TextButton(onClick = { actions.share(job.files) }) { Text("공유") }
+                            if (job.error != null && job.detail != null) TextButton(onClick = { onDetail(job) }) { Text("자세히") }
+                        }
+                        else -> {
+                            TextButton(onClick = { actions.retry(job.id) }) { Text("다시") }
+                            if (job.detail != null) TextButton(onClick = { onDetail(job) }) { Text("자세히") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Thumb(job: Job) {
+    val ctx = LocalContext.current
+    val colors = MaterialTheme.colorScheme
+    val file = job.files.firstOrNull()
+    val bitmap by produceState<ImageBitmap?>(null, file?.uri) {
+        value = if (file != null && (file.mime.startsWith("video/") || file.mime.startsWith("image/"))) {
+            withContext(Dispatchers.IO) {
+                try {
+                    ctx.contentResolver.loadThumbnail(Uri.parse(file.uri), Size(320, 320), null).asImageBitmap()
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        } else null
+    }
+    Box(
+        Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)).background(colors.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        val b = bitmap
+        when {
+            b != null -> Image(b, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            file?.mime?.startsWith("audio/") == true -> Text("♪", fontSize = 26.sp, color = colors.primary)
+            job.status == Status.FAILED -> Text("!", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = colors.error)
+            job.status == Status.CANCELLED -> CrossGlyph(16.dp, colors.onSurfaceVariant)
+            else -> Icon(painterResource(R.drawable.ic_stat), contentDescription = null, tint = colors.primary, modifier = Modifier.size(28.dp))
+        }
+    }
+}
+
+@Composable
+private fun EngineCard(engine: EngineState, onUpdate: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+    ) {
+        Column(Modifier.padding(start = 16.dp, top = 14.dp, end = 8.dp, bottom = 4.dp)) {
+            Text("다운로드 엔진", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            val line = when (engine) {
+                EngineState.Preparing -> "처음 실행 준비 중… (한 번만 해요)"
+                EngineState.Updating -> "새 버전 확인 중…"
+                is EngineState.Broken -> engine.message
+                is EngineState.Ready -> buildString {
+                    append("yt-dlp ")
+                    append(Engine.shortVersion(engine.version) ?: "기본 버전")
+                    when {
+                        engine.updateFailed -> append(" · 새 버전 확인 실패 (인터넷 연결 확인)")
+                        engine.checkedAt > 0 -> append(" · ${ago(engine.checkedAt)} 확인")
+                    }
+                }
+            }
+            Text(line, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            Text(
+                "저장 위치: 내장 저장공간 › Download › 영상다운로더",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant,
+            )
+            TextButton(
+                onClick = onUpdate,
+                enabled = engine is EngineState.Ready || engine is EngineState.Broken,
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+            ) { Text(if (engine is EngineState.Updating) "확인 중…" else "엔진 업데이트 확인") }
+        }
+    }
+}
+
+private fun ago(t: Long): String {
+    val m = (System.currentTimeMillis() - t) / 60_000
+    return when {
+        m < 1 -> "방금"
+        m < 60 -> "${m}분 전"
+        m < 60 * 24 -> "${m / 60}시간 전"
+        else -> "${m / (60 * 24)}일 전"
+    }
+}
+
+@Composable
+private fun CrossGlyph(size: Dp, color: Color) {
+    Canvas(Modifier.size(size)) {
+        val w = 2.dp.toPx()
+        drawLine(color, Offset(0f, 0f), Offset(this.size.width, this.size.height), strokeWidth = w, cap = StrokeCap.Round)
+        drawLine(color, Offset(this.size.width, 0f), Offset(0f, this.size.height), strokeWidth = w, cap = StrokeCap.Round)
+    }
+}

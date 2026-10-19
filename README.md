@@ -1,0 +1,27 @@
+# 영상 다운로더
+
+링크만 넣으면 영상을 **진짜 MP4**로 받아서 폰의 `Download/영상다운로더` 폴더에 저장하는 안드로이드 앱.
+
+- 유튜브·인스타·틱톡·X·비메오 등 [yt-dlp가 지원하는 사이트](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md) 전부, 그리고 영상이 들어 있는 일반 웹페이지
+- 다른 앱에서 **공유 → 영상 다운로더** 를 누르면 바로 받기 시작
+- 화질 고르기: 최고 화질 / 1080p / 720p / 480p / 소리만(M4A)
+- 화면을 꺼도 계속 받고, 알림에 진행률·취소 버튼
+- 다운로드 엔진(yt-dlp)을 하루 한 번 자동으로 최신으로 업데이트, 실패하면 새 엔진으로 한 번 더 시도
+- 유튜브 처리에 필요한 JavaScript 엔진(QuickJS-NG)을 앱에 같이 넣음
+
+DRM으로 보호된 영상(넷플릭스 등)은 받을 수 없어요. 저작권이 있는 영상은 개인적으로 볼 용도로만 쓰세요.
+
+## 설치
+
+[최신 릴리스](../../releases/latest)에서 `video-downloader.apk`를 받아 설치. 새 버전은 그대로 덮어 설치하면 돼요.
+
+## 만드는 방법
+
+`main`에 올리면 GitHub Actions가
+
+1. QuickJS-NG를 안드로이드용으로 컴파일하고
+2. 앱을 빌드한 뒤
+3. 안드로이드 13 에뮬레이터에서 실제 엔진으로 다운로드 테스트(HLS 스트림이 있는 웹페이지 → MP4, 소리만 → M4A, 엔진 업데이트, JS 엔진 인식)와 앱 화면 테스트를 하고
+4. 통과하면 APK를 `latest` 릴리스에 올려요.
+
+엔진: [youtubedl-android](https://github.com/JunkFood02/youtubedl-android) (Python + yt-dlp + ffmpeg)

@@ -1,0 +1,147 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # JavaScript engine that yt-dlp uses to solve YouTube's challenges on the phone.
+  QJS_VERSION: v0.17.0
+
+jobs:
+  build-test-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache the QuickJS build
+        id: qjs-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/jniLibs
+          key: qjs-${{ env.QJS_VERSION }}-android29-v1
+
+      - name: Build QuickJS-NG for Android
+        if: steps.qjs-cache.outputs.cache-hit != 'true'
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "NDK: $NDK"
+          git clone -q --depth 1 --branch "$QJS_VERSION" https://github.com/quickjs-ng/quickjs /tmp/qjs-src
+          for abi in arm64-v8a x86_64; do
+            cmake -S /tmp/qjs-src -B "/tmp/qjs-$abi" \
+              -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+              -DANDROID_ABI="$abi" -DANDROID_PLATFORM=android-29 \
+              -DCMAKE_BUILD_TYPE=Release -DQJS_BUILD_LIBC=ON
+            cmake --build "/tmp/qjs-$abi" --target qjs_exe -j 4
+            mkdir -p "app/src/main/jniLibs/$abi"
+            # Android only unpacks lib*.so files, so the program travels under that name.
+            "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" -o "app/src/main/jniLibs/$abi/libqjs.so" "/tmp/qjs-$abi/qjs"
+          done
+          file app/src/main/jniLibs/*/libqjs.so
+          ls -la app/src/main/jniLibs/*
+
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Make the test web site (a page with an HLS video, a direct MP4 link)
+        run: bash tools/make_test_media.sh build/testmedia
+
+      - name: Start the test web server
+        run: |
+          nohup python3 -m http.server 8000 --directory build/testmedia > server.log 2>&1 &
+          sleep 2
+          curl -sf http://127.0.0.1:8000/page.html > /dev/null && echo "test server is up"
+
+      - name: Unit tests, build app and device tests
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run engine tests and the app on an Android 13 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: |
+            ./gradlew --no-daemon connectedDebugAndroidTest || touch tests-failed
+            adb logcat -d > device.log || true
+            bash tools/e2e.sh
+
+      - name: Publish screenshots of the app run (branch ci-screens)
+        if: always()
+        run: |
+          [ -d shots ] || exit 0
+          cat shots/result.txt || true
+          rm -rf /tmp/screens && mkdir /tmp/screens && cp -r shots/. /tmp/screens/
+          cp device.log /tmp/screens/device.log 2>/dev/null || true
+          cd /tmp/screens
+          git init -q && git checkout -q -b ci-screens
+          git add -A && git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "screens for ${GITHUB_SHA}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-screens
+
+      - name: Report test results
+        if: always()
+        run: |
+          python3 tools/report_failures.py || true
+          test ! -f tests-failed
+
+      - name: Check the downloaded files with ffprobe
+        run: |
+          ls -la test-output
+          test -f test-output/engine-test.mp4
+          for f in test-output/*; do
+            echo "== $f"
+            ffprobe -v error -show_entries format=format_name,duration:stream=codec_name -of compact "$f"
+            ffmpeg -v error -i "$f" -f null - && echo "decodes cleanly"
+          done
+
+      - name: Keep test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            device.log
+
+      - name: Keep the APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-downloader-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Publish the phone APK as the latest release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-arm64-v8a-debug.apk video-downloader.apk
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest video-downloader.apk \
+            --target "${GITHUB_SHA}" \
+            --title "영상 다운로더 1.0.${GITHUB_RUN_NUMBER}" \
+            --notes "폰에서 **video-downloader.apk**를 눌러 받은 뒤 설치하세요. 처음 한 번은 '출처를 알 수 없는 앱 설치'를 허용해야 해요. 새 버전은 지우지 않고 그대로 덮어 설치하면 돼요."
