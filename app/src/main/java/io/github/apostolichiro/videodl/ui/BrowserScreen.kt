@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -82,6 +83,7 @@ fun BrowserScreen(browser: Browser, actions: BrowserActions) {
     val found by browser.found.collectAsStateWithLifecycle()
     val colors = MaterialTheme.colorScheme
     val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     var address by remember { mutableStateOf(url) }
     var editing by remember { mutableStateOf(false) }
     val home = url.isEmpty()
@@ -91,7 +93,10 @@ fun BrowserScreen(browser: Browser, actions: BrowserActions) {
 
     fun go() {
         browser.open(address)
-        focus.clearFocus()
+        // Put the keyboard away so the page can be seen and tapped.
+        keyboard?.hide()
+        focus.clearFocus(force = true)
+        browser.webView.requestFocus()
     }
 
     Column(Modifier.fillMaxSize().background(colors.background)) {
@@ -138,7 +143,8 @@ fun BrowserScreen(browser: Browser, actions: BrowserActions) {
                         quickSites.forEach { (name, link) ->
                             Box(
                                 Modifier.clip(RoundedCornerShape(14.dp)).background(colors.surface)
-                                    .clickable { browser.open(link) }.padding(horizontal = 16.dp, vertical = 12.dp),
+                                    .clickable { keyboard?.hide(); focus.clearFocus(force = true); browser.open(link) }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
                             ) { Text(name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium) }
                         }
                     }
