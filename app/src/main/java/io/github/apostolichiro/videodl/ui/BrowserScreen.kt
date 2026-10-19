@@ -92,11 +92,18 @@ fun BrowserScreen(browser: Browser, actions: BrowserActions) {
     BackHandler { if (canGoBack) browser.webView.goBack() else actions.leave() }
 
     fun go() {
-        browser.open(address)
         // Put the keyboard away so the page can be seen and tapped.
         keyboard?.hide()
         focus.clearFocus(force = true)
-        browser.webView.requestFocus()
+        browser.open(address)
+    }
+
+    // A new page started loading (typed address, quick link, or a link on the page): done typing.
+    LaunchedEffect(progress < 100) {
+        if (progress < 100 && !home) {
+            keyboard?.hide()
+            focus.clearFocus(force = true)
+        }
     }
 
     Column(Modifier.fillMaxSize().background(colors.background)) {

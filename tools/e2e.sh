@@ -78,6 +78,14 @@ adb shell input text "http://10.0.2.2:8000/js.html"
 adb shell input keyevent KEYCODE_ENTER
 sleep 8
 shot 10_browser_page
+# The app should put the keyboard away by itself once the page opens.
+if adb shell dumpsys input_method | grep -q "mInputShown=true"; then
+  log "keyboard after opening page: STILL UP"
+  adb shell input keyevent KEYCODE_BACK
+  sleep 1
+else
+  log "keyboard after opening page: hidden (ok)"
+fi
 ui wait "찾음" 15 >/dev/null && log "browser saw the stream: ok" || log "browser saw the stream: no"
 ui tap "이 영상 받기" >/dev/null && log "browser button: tapped" || log "browser button: FAILED"
 sleep 2
