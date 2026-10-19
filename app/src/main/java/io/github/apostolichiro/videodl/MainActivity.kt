@@ -38,7 +38,10 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handleShare(intent)
 
         val actions = Actions(
-            download = { url, q -> start(url, q) },
+            download = { url, q -> request(NewJob(url, q)) },
+            forceDownload = { n -> request(n, force = true) },
+            startUpdate = { r -> Updater.download(applicationContext, r) },
+            installUpdate = { f -> Updater.install(this, f) },
             readClipboard = {
                 val cm = getSystemService(ClipboardManager::class.java)
                 cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString()
@@ -100,6 +103,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (Store.tab.value == 1) browser?.webView?.onResume()
+        Thread { Updater.check(applicationContext, 3 * 60 * 60 * 1000L) }.start()
     }
 
     override fun onDestroy() {
@@ -118,7 +122,7 @@ class MainActivity : ComponentActivity() {
             Store.notice.value = "공유한 내용에서 링크를 찾지 못했어요."
             return
         }
-        start(url, Store.quality)
+        request(NewJob(url, Store.quality))
     }
 
     private fun askNotificationsOnce() {
@@ -130,10 +134,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun start(url: String, quality: Quality) {
+    /**
+     * Adds a download, unless the same video was already downloaded: then asks first
+     * ([Store.dupAsk] shows "보기 / 그래도 받기"). Returns true when it started.
+     */
+    private fun request(n: NewJob, force: Boolean = false, startedNotice: String? = null): Boolean {
         askNotificationsOnce()
-        Store.add(url, quality)
-        DownloadService.start(this)
+        if (!force) {
+            Downloads.alreadyHave(this, n.url, n.quality)?.let {
+                Store.dupAsk.value = DupAsk(it, n)
+                return false
+            }
+        }
+        Downloads.start(this, n)
+        startedNotice?.let { Store.notice.value = it }
+        return true
     }
 
     /** The browser's [이 영상 받기] button. */
@@ -144,18 +159,18 @@ class MainActivity : ComponentActivity() {
             Store.notice.value = "먼저 영상이 있는 페이지를 열어 주세요."
             return
         }
-        askNotificationsOnce()
-        Store.add(
-            url = page,
-            quality = Store.quality,
-            origin = Origin.BROWSER,
-            referer = page,
-            pageTitle = b.title.value.ifBlank { null },
-            userAgent = b.userAgent,
-            fallbacks = b.found.value,
+        request(
+            NewJob(
+                url = page,
+                quality = Store.quality,
+                origin = Origin.BROWSER,
+                referer = page,
+                pageTitle = b.title.value.ifBlank { null },
+                userAgent = b.userAgent,
+                fallbacks = b.found.value,
+            ),
+            startedNotice = "받기 시작했어요. [받기] 탭에서 볼 수 있어요.",
         )
-        DownloadService.start(this)
-        Store.notice.value = "받기 시작했어요. [받기] 탭에서 볼 수 있어요."
     }
 
     /** A download button/link on a web page. Videos go through the engine, other files to Android's downloader. */
@@ -169,9 +184,10 @@ class MainActivity : ComponentActivity() {
         val page = browser?.webView?.url
         askNotificationsOnce()
         if (type.startsWith("video/") || type.startsWith("audio/") || Saver.mimeOf(name).let { it.startsWith("video/") || it.startsWith("audio/") }) {
-            Store.add(url = url, quality = Quality.BEST, origin = Origin.SITE, referer = page, pageTitle = name, userAgent = userAgent)
-            DownloadService.start(this)
-            Store.notice.value = "받기 시작했어요: $name"
+            request(
+                NewJob(url = url, quality = Quality.BEST, origin = Origin.SITE, referer = page, pageTitle = name, userAgent = userAgent),
+                startedNotice = "받기 시작했어요: $name",
+            )
             return
         }
         try {

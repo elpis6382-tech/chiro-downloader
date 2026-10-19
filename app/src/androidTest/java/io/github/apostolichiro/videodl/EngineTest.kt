@@ -140,6 +140,16 @@ class EngineTest {
         assertNotNull(outcome.error)
     }
 
+    /** The link box preview reads the title without downloading. */
+    @Test
+    fun e2_previewReadsTheTitle() {
+        val p = Engine.info(ctx, "$host/page.html", "test-info")
+        log("preview: title=${p.title} choices=${p.choices}")
+        assertTrue(p.title ?: "", p.title?.startsWith("테스트 영상") == true)
+        val big = Engine.info(ctx, "$host/clip.mp4", "test-info-2")
+        assertEquals("clip", big.title)
+    }
+
     /** Real sites from a data-center IP may be blocked, so this only reports what happened. */
     @Test
     fun f_realSitesForTheRecord() {

@@ -27,6 +27,7 @@ class App : Application() {
                 return
             }
             updateEngine(ctx, DAY)
+            Updater.check(ctx, 3 * 60 * 60 * 1000L)
         }
 
         /** Updates yt-dlp if the last check is older than [maxAgeMs] (0 = always check). Never throws. */

@@ -82,11 +82,29 @@ import io.github.apostolichiro.videodl.Texts
 import io.github.apostolichiro.videodl.engine.Engine
 import io.github.apostolichiro.videodl.engine.Links
 import io.github.apostolichiro.videodl.engine.Quality
+import androidx.compose.material3.CircularProgressIndicator
+import io.github.apostolichiro.videodl.AppRelease
+import io.github.apostolichiro.videodl.Downloads
+import io.github.apostolichiro.videodl.NewJob
+import io.github.apostolichiro.videodl.UpdateState
+import io.github.apostolichiro.videodl.engine.Errors
+import io.github.apostolichiro.videodl.engine.Estimate
+import io.github.apostolichiro.videodl.engine.Fmt
+import io.github.apostolichiro.videodl.engine.Preview
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class Actions(
     val download: (String, Quality) -> Unit,
+    val forceDownload: (NewJob) -> Unit,
+    val startUpdate: (AppRelease) -> Unit,
+    val installUpdate: (File) -> Unit,
     val readClipboard: () -> String?,
     val updateEngine: () -> Unit,
     val open: (SavedFile) -> Unit,
@@ -102,7 +120,44 @@ fun MainScreen(actions: Actions) {
     var text by rememberSaveable { mutableStateOf("") }
     var quality by remember { mutableStateOf(Store.quality) }
     var detailOf by remember { mutableStateOf<Job?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    val update by Store.update.collectAsStateWithLifecycle()
     val keyboard = LocalSoftwareKeyboardController.current
+    val ctx = LocalContext.current
+
+    // Preview of the link in the box: title, picture, sizes per quality. Cancelled when the link changes.
+    val link = Links.extract(text)
+    var preview by remember { mutableStateOf<PreviewUi?>(null) }
+    LaunchedEffect(link) {
+        preview = null
+        if (link == null) return@LaunchedEffect
+        delay(400)
+        preview = PreviewUi.Loading
+        val pid = "info-" + System.nanoTime()
+        preview = try {
+            coroutineScope {
+                val work = async(Dispatchers.IO) { Engine.info(ctx, link, pid) }
+                try {
+                    PreviewUi.Ready(work.await())
+                } catch (e: CancellationException) {
+                    Engine.cancel(pid)
+                    throw e
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            PreviewUi.Failed(Errors.korean(Errors.lastErrorLine(e.message) ?: e.message))
+        }
+    }
+    val doneCount = jobs.count { it.status == Status.DONE }
+    val already by produceState<Job?>(null, link, quality, doneCount) {
+        value = link?.let { withContext(Dispatchers.IO) { Downloads.alreadyHave(ctx, it, quality) } }
+    }
+
+    val shown = if (query.isBlank()) jobs else jobs.filter { j ->
+        (listOf(Texts.title(j), j.url) + j.files.map { it.name }).any { it.contains(query.trim(), ignoreCase = true) }
+    }
 
     fun submit() {
         val url = Links.extract(text) ?: return
@@ -118,10 +173,13 @@ fun MainScreen(actions: Actions) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item(key = "head") { Header() }
+            if (update !is UpdateState.None) item(key = "update") { UpdateCard(update, actions) }
             item(key = "input") {
                 InputCard(
                     text = text,
                     onText = { text = it },
+                    preview = preview,
+                    already = already,
                     quality = quality,
                     onQuality = { quality = it; Store.quality = it },
                     onPaste = {
@@ -136,15 +194,48 @@ fun MainScreen(actions: Actions) {
                 item(key = "empty") { HowTo() }
             } else {
                 item(key = "listhead") {
-                    Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("받은 목록", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                        if (jobs.any { it.status == Status.DONE }) {
-                            TextButton(onClick = { Store.clearFinished() }) { Text("완료된 것 지우기") }
+                    Column {
+                        Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("받은 목록", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            if (jobs.any { it.status == Status.DONE }) {
+                                TextButton(onClick = { Store.clearFinished() }) { Text("완료된 것 지우기") }
+                            }
+                        }
+                        if (jobs.size >= 3) {
+                            OutlinedTextField(
+                                value = query,
+                                onValueChange = { query = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                placeholder = { Text("받은 목록 검색 (제목, 사이트)", maxLines = 1) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                textStyle = MaterialTheme.typography.bodyMedium,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+                                trailingIcon = {
+                                    if (query.isNotEmpty()) {
+                                        Box(
+                                            Modifier.size(40.dp).clip(CircleShape).clickable { query = "" },
+                                            contentAlignment = Alignment.Center,
+                                        ) { CrossGlyph(12.dp, MaterialTheme.colorScheme.onSurfaceVariant) }
+                                    }
+                                },
+                            )
                         }
                     }
                 }
+                if (shown.isEmpty()) {
+                    item(key = "nomatch") {
+                        Text(
+                            "'${query.trim()}'에 맞는 영상이 없어요.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                        )
+                    }
+                }
             }
-            items(jobs, key = { it.id }) { job ->
+            items(shown, key = { it.id }) { job ->
                 JobCard(job, actions, onDetail = { detailOf = it })
             }
             item(key = "engine") { EngineCard(engine, actions.updateEngine) }
@@ -187,6 +278,8 @@ private fun Header() {
 private fun InputCard(
     text: String,
     onText: (String) -> Unit,
+    preview: PreviewUi?,
+    already: Job?,
     quality: Quality,
     onQuality: (Quality) -> Unit,
     onPaste: () -> Unit,
@@ -218,11 +311,34 @@ private fun InputCard(
                     }
                 },
             )
+            if (preview != null || already != null) {
+                Spacer(Modifier.height(12.dp))
+                PreviewBox(preview, already)
+            }
             Spacer(Modifier.height(12.dp))
+            val p = (preview as? PreviewUi.Ready)?.preview
+            // A hidden quality gives the same file as "최고 화질", so that button shows as chosen.
+            val chosen = if (p != null && !p.shows(quality)) Quality.BEST else quality
             // Wraps onto a second line on narrow phones instead of hiding options off-screen.
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Quality.entries.forEach { q ->
-                    FilterChip(selected = q == quality, onClick = { onQuality(q) }, label = { Text(q.label) })
+                Quality.entries.filter { p == null || p.isPlaylist || p.shows(it) }.forEach { q ->
+                    val c = p?.choices?.get(q)
+                    val sub = c?.let {
+                        listOfNotNull(
+                            if (q == Quality.BEST) Estimate.resLabel(it.res) else null,
+                            it.bytes?.let { b -> "약 " + Fmt.size(b) },
+                        ).joinToString(" · ")
+                    }?.ifEmpty { null }
+                    FilterChip(
+                        selected = q == chosen,
+                        onClick = { onQuality(q) },
+                        label = {
+                            Column(Modifier.padding(vertical = if (sub != null) 4.dp else 0.dp)) {
+                                Text(q.label)
+                                if (sub != null) Text(sub, fontSize = 11.sp, lineHeight = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                    )
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -432,5 +548,129 @@ private fun CrossGlyph(size: Dp, color: Color) {
         val w = 2.dp.toPx()
         drawLine(color, Offset(0f, 0f), Offset(this.size.width, this.size.height), strokeWidth = w, cap = StrokeCap.Round)
         drawLine(color, Offset(this.size.width, 0f), Offset(0f, this.size.height), strokeWidth = w, cap = StrokeCap.Round)
+    }
+}
+
+/** What the link box knows about the pasted link. */
+sealed interface PreviewUi {
+    data object Loading : PreviewUi
+    data class Ready(val preview: Preview) : PreviewUi
+    data class Failed(val message: String) : PreviewUi
+}
+
+@Composable
+private fun PreviewBox(preview: PreviewUi?, already: Job?) {
+    val colors = MaterialTheme.colorScheme
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        when (preview) {
+            PreviewUi.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text("영상 정보 불러오는 중…", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            }
+            is PreviewUi.Failed -> Text(
+                "미리보기를 못 불러왔어요. 그래도 [받기]는 해볼 수 있어요.",
+                style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+            )
+            is PreviewUi.Ready -> {
+                val p = preview.preview
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(width = 112.dp, height = 63.dp).clip(RoundedCornerShape(10.dp)).background(colors.surfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val pic = netImage(p.thumbnail)
+                        if (pic != null) Image(pic, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        else Icon(painterResource(R.drawable.ic_stat), contentDescription = null, tint = colors.primary, modifier = Modifier.size(22.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            p.title ?: "제목 없음", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        )
+                        val meta = listOfNotNull(
+                            p.uploader,
+                            p.duration?.let { durationText(it) },
+                            p.playlistCount?.let { "재생목록 · 영상 ${it}개" },
+                        ).joinToString(" · ")
+                        if (meta.isNotEmpty()) Text(meta, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                if (p.isPlaylist) {
+                    Text("[받기]를 누르면 이 목록의 영상을 모두 받아요.", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                }
+            }
+            null -> Unit
+        }
+        if (already != null) {
+            Text(
+                "이미 받은 영상이에요 (${Texts.status(already)})",
+                style = MaterialTheme.typography.bodySmall, color = colors.tertiary, fontWeight = FontWeight.Medium,
+            )
+        }
+    }
+}
+
+private fun durationText(sec: Double): String {
+    val s = sec.toLong()
+    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s % 3600) / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
+}
+
+/** A picture from the web (a video's thumbnail), loaded off the main thread. */
+@Composable
+private fun netImage(url: String?): ImageBitmap? {
+    val bmp by produceState<ImageBitmap?>(null, url) {
+        value = if (url == null) null else withContext(Dispatchers.IO) {
+            try {
+                val c = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 10_000
+                    readTimeout = 15_000
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) video-downloader")
+                }
+                c.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) }?.asImageBitmap()
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+    return bmp
+}
+
+@Composable
+private fun UpdateCard(state: UpdateState, actions: Actions) {
+    val colors = MaterialTheme.colorScheme
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.primaryContainer),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(start = 16.dp, top = 14.dp, end = 8.dp, bottom = 6.dp)) {
+            Text("새 버전이 나왔어요", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = colors.onPrimaryContainer)
+            Spacer(Modifier.height(4.dp))
+            when (state) {
+                is UpdateState.Available -> {
+                    Text("버튼 한 번이면 받고 설치까지 돼요.", style = MaterialTheme.typography.bodySmall, color = colors.onPrimaryContainer)
+                    TextButton(onClick = { actions.startUpdate(state.release) }, contentPadding = PaddingValues(0.dp)) { Text("지금 업데이트") }
+                }
+                is UpdateState.Downloading -> {
+                    val f = state.fraction
+                    Text("새 버전 받는 중" + (f?.let { " ${(it * 100).toInt()}%" } ?: "…"), style = MaterialTheme.typography.bodySmall, color = colors.onPrimaryContainer)
+                    Spacer(Modifier.height(8.dp))
+                    if (f != null) LinearProgressIndicator(progress = { f }, modifier = Modifier.fillMaxWidth().padding(end = 8.dp))
+                    else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(end = 8.dp))
+                    Spacer(Modifier.height(10.dp))
+                }
+                is UpdateState.Ready -> {
+                    Text("다 받았어요. [설치하기]를 누르고 설치 화면에서 [업데이트]를 눌러 주세요.", style = MaterialTheme.typography.bodySmall, color = colors.onPrimaryContainer)
+                    TextButton(onClick = { actions.installUpdate(state.file) }, contentPadding = PaddingValues(0.dp)) { Text("설치하기") }
+                }
+                is UpdateState.Failed -> {
+                    Text(state.message, style = MaterialTheme.typography.bodySmall, color = colors.error)
+                    TextButton(onClick = { actions.startUpdate(state.release) }, contentPadding = PaddingValues(0.dp)) { Text("다시") }
+                }
+                UpdateState.None -> Unit
+            }
+        }
     }
 }

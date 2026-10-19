@@ -1,7 +1,11 @@
 package io.github.apostolichiro.videodl
 
 import io.github.apostolichiro.videodl.engine.Errors
+import io.github.apostolichiro.videodl.engine.Estimate
 import io.github.apostolichiro.videodl.engine.Event
+import io.github.apostolichiro.videodl.engine.FormatInfo
+import io.github.apostolichiro.videodl.engine.Preview
+import io.github.apostolichiro.videodl.engine.Versions
 import io.github.apostolichiro.videodl.engine.Links
 import io.github.apostolichiro.videodl.engine.Lines
 import io.github.apostolichiro.videodl.engine.Quality
@@ -132,6 +136,52 @@ class LinesTest {
         seen = Sniff.add(seen, "https://a/2.mp4")
         seen = Sniff.add(seen, "https://a/1.mp4")
         assertEquals(listOf("https://a/s.m3u8", "https://a/1.mp4", "https://a/2.mp4"), seen)
+    }
+
+    @Test
+    fun sameVideoWrittenDifferentlyIsOneAddress() {
+        val yt = "youtube.com/watch?v=dQw4w9WgXcQ"
+        assertEquals(yt, Links.normalize("https://youtu.be/dQw4w9WgXcQ?si=abc123"))
+        assertEquals(yt, Links.normalize("https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=share&t=42"))
+        assertEquals(yt, Links.normalize("https://www.youtube.com/shorts/dQw4w9WgXcQ"))
+        assertEquals("instagram.com/reel/C0ffee", Links.normalize("https://www.instagram.com/reel/C0ffee/?igsh=MWx1"))
+        assertEquals("x.com/a/status/1", Links.normalize("https://twitter.com/a/status/1?s=20"))
+        assertEquals("site.com/v?id=7", Links.normalize("https://site.com/v?utm_source=x&id=7"))
+    }
+
+    @Test
+    fun estimatesSizesPerQualityButton() {
+        // A YouTube-like video: H.264 and VP9 up to 1080p, AV1 4K, AAC and Opus audio. 100 seconds long.
+        val f = listOf(
+            FormatInfo("avc1.640028", "none", 1920, 1080, 30.0, 4000.0, null, "mp4"),
+            FormatInfo("vp09.00.40.08", "none", 1920, 1080, 30.0, 2500.0, null, "webm"),
+            FormatInfo("avc1.4d401f", "none", 1280, 720, 30.0, 2000.0, 25_000_000, "mp4"),
+            FormatInfo("av01.0.12M.08", "none", 3840, 2160, 30.0, 12000.0, null, "mp4"),
+            FormatInfo("avc1.4d401e", "none", 854, 480, 30.0, 1000.0, null, "mp4"),
+            FormatInfo("none", "mp4a.40.2", null, null, null, 128.0, 1_600_000, "m4a"),
+            FormatInfo("none", "opus", null, null, null, 160.0, null, "webm"),
+        )
+        val c = Estimate.choices(f, 100.0)
+        assertEquals(2160, c[Quality.BEST]!!.res)
+        assertEquals(1080, c[Quality.P1080]!!.res)
+        assertEquals(4000.0 * 1000 / 8 * 100 + 1_600_000, c[Quality.P1080]!!.bytes!!.toDouble(), 1.0)
+        assertEquals(25_000_000L + 1_600_000, c[Quality.P720]!!.bytes)
+        assertEquals(1_600_000L, c[Quality.AUDIO]!!.bytes)
+        assertEquals(2160, Estimate.maxRes(f))
+        val p = Preview("u", "t", null, 100.0, null, null, c, 720)
+        assertEquals(false, p.shows(Quality.P1080))
+        assertEquals(false, p.shows(Quality.P720))
+        assertTrue(p.shows(Quality.P480))
+        assertTrue(p.shows(Quality.BEST))
+        // A vertical 1080x1920 short counts as 1080p.
+        assertEquals(1080, FormatInfo("avc1", "mp4a", 1080, 1920, 30.0, null, null, "mp4").res)
+        // A plain file from an ordinary site: no codec info, still a video with sound.
+        val plain = Estimate.choices(listOf(FormatInfo(null, null, null, null, null, null, 5_000_000, "mp4")), null)
+        assertEquals(5_000_000L, plain[Quality.BEST]!!.bytes)
+        assertEquals("4K", Estimate.resLabel(2160))
+        assertEquals(12, Versions.parse("영상 다운로더 1.0.12"))
+        assertEquals(105, Versions.parse("새 버전이에요.\nversionCode: 105"))
+        assertNull(Versions.parse("something else"))
     }
 
     @Test

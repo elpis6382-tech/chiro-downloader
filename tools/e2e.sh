@@ -19,7 +19,12 @@ waitfile() {
   done
   return 1
 }
-share() { adb shell "am start -W -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '$1' -n $PKG/.MainActivity" >/dev/null; }
+# Sharing doesn't open the app any more (only a short message), so the app is opened afterwards to watch.
+share() {
+  adb shell "am start -W -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '$1' -n $PKG/.ShareActivity" >/dev/null
+  sleep 2
+  adb shell am start -W -n $PKG/.MainActivity >/dev/null
+}
 
 adb install -r "$APK" >/dev/null && log "install: ok" || log "install: FAILED"
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS
@@ -47,7 +52,8 @@ ui tap "소리만" --exact >/dev/null
 ui tap "영상 링크" --exact >/dev/null || ui tapclass android.widget.EditText >/dev/null
 sleep 1
 adb shell input text "http://10.0.2.2:8000/clip.mp4"
-sleep 1
+# The box shows a preview: the video's title ("clip") as its own line.
+ui wait "clip" 40 --exact >/dev/null && log "preview: ok" || log "preview: FAILED"
 shot 5_typed
 adb shell input keyevent KEYCODE_ENTER
 sleep 3
@@ -55,6 +61,18 @@ ui wait "M4A||못 받았어요" 120 >/dev/null
 sleep 2
 shot 6_audio_done
 ui wait "M4A" 1 >/dev/null && log "audio only: ok" || log "audio only: FAILED"
+
+# 2b) The same link again: the app should say it's already downloaded instead of downloading twice.
+ui tap "영상 링크" --exact >/dev/null || ui tapclass android.widget.EditText >/dev/null
+sleep 1
+adb shell input text "http://10.0.2.2:8000/clip.mp4"
+ui wait "이미 받은 영상이에요" 40 >/dev/null && log "already-downloaded note: ok" || log "already-downloaded note: FAILED"
+adb shell input keyevent KEYCODE_ENTER
+sleep 2
+shot 6b_duplicate
+ui wait "그래도 받기" 10 >/dev/null && log "already-downloaded question: ok" || log "already-downloaded question: FAILED"
+adb shell input keyevent KEYCODE_BACK
+sleep 1
 
 # 3) A real site, for the record (data-center IPs are often blocked by big sites).
 ui tap "최고 화질" --exact >/dev/null
@@ -107,6 +125,14 @@ waitfile "notes" 60 && log "site file download: ok" || log "site file download: 
 ui tap "받기" --exact >/dev/null
 sleep 3
 shot 14_list
+
+# 7) Search the list.
+ui tap "받은 목록 검색" >/dev/null && log "search box: ok" || log "search box: FAILED"
+sleep 1
+adb shell input text "clip"
+sleep 2
+shot 15_search
+if ui gone "자바스크립트 영상" 5 >/dev/null && ui wait "clip" 5 --exact >/dev/null; then log "search: ok"; else log "search: FAILED"; fi
 
 adb shell "ls -la '$DIR/'" >> shots/result.txt 2>&1
 adb pull "$DIR/vdl-test-output.mp4" test-output/engine-test.mp4 >/dev/null 2>&1 || true

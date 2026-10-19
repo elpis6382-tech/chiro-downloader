@@ -21,6 +21,20 @@ data class SavedFile(val uri: String, val name: String, val mime: String, val si
 /** Where a download came from. */
 enum class Origin { LINK, BROWSER, SITE }
 
+/** A download about to be added to the list. */
+data class NewJob(
+    val url: String,
+    val quality: Quality,
+    val origin: Origin = Origin.LINK,
+    val referer: String? = null,
+    val pageTitle: String? = null,
+    val userAgent: String? = null,
+    val fallbacks: List<String> = emptyList(),
+)
+
+/** The same video was downloaded before: show it, or download again? */
+data class DupAsk(val existing: Job, val pending: NewJob)
+
 data class Job(
     val id: String,
     val url: String,
@@ -71,6 +85,12 @@ object Store {
     /** 0 = downloads, 1 = browser. */
     val tab = MutableStateFlow(0)
 
+    /** A newer version of the app itself. */
+    val update = MutableStateFlow<UpdateState>(UpdateState.None)
+
+    /** "You already downloaded this" question waiting for an answer. */
+    val dupAsk = MutableStateFlow<DupAsk?>(null)
+
     fun init(ctx: Context) {
         if (::prefs.isInitialized) return
         prefs = ctx.getSharedPreferences("videodl", Context.MODE_PRIVATE)
@@ -93,6 +113,12 @@ object Store {
     var askedNotifications: Boolean
         get() = prefs.getBoolean("askedNotifications", false)
         set(v) = prefs.edit().putBoolean("askedNotifications", v).apply()
+
+    var updateCheckedAt: Long
+        get() = prefs.getLong("updateCheckedAt", 0L)
+        set(v) = prefs.edit().putLong("updateCheckedAt", v).apply()
+
+    fun add(n: NewJob): Job = add(n.url, n.quality, n.origin, n.referer, n.pageTitle, n.userAgent, n.fallbacks)
 
     fun add(
         url: String,

@@ -150,6 +150,32 @@ object Links {
 
     fun looksLikeLink(text: String): Boolean = extract(text) != null
 
+    private val trackingParams = setOf(
+        "si", "feature", "igsh", "igshid", "fbclid", "gclid", "ref", "ref_src", "ref_url", "t", "s",
+        "is_from_webapp", "sender_device", "_r", "_t", "share_id", "pp", "embeds_referring_euri", "mibextid",
+    )
+
+    /**
+     * One address per video, so a video shared again ("youtu.be/x", "m.youtube.com/watch?v=x&si=...")
+     * is recognised as already downloaded.
+     */
+    fun normalize(link: String): String {
+        val m = Regex("""^(https?)://([^/?#]+)([^?#]*)(\?[^#]*)?""", RegexOption.IGNORE_CASE).find(link.trim()) ?: return link.trim()
+        var host = m.groupValues[2].lowercase().removePrefix("www.").removePrefix("m.").removePrefix("mobile.")
+        val path = m.groupValues[3].trimEnd('/')
+        val params = m.groupValues[4].removePrefix("?").split('&').filter { it.isNotBlank() }
+            .map { it.substringBefore('=') to it.substringAfter('=', "") }
+        if (host == "twitter.com") host = "x.com"
+        if (host == "youtu.be") return "youtube.com/watch?v=" + path.trim('/').substringBefore('/')
+        if (host.endsWith("youtube.com")) {
+            Regex("""^/(shorts|live|embed)/([\w-]+)""").find(path)?.let { return "youtube.com/watch?v=" + it.groupValues[2] }
+            if (path == "/watch") params.firstOrNull { it.first == "v" }?.let { return "youtube.com/watch?v=" + it.second }
+            host = "youtube.com"
+        }
+        val kept = params.filter { (k, _) -> k.lowercase() !in trackingParams && !k.lowercase().startsWith("utm_") }.sortedBy { it.first }
+        return host + path + if (kept.isEmpty()) "" else "?" + kept.joinToString("&") { "${it.first}=${it.second}" }
+    }
+
     fun isYouTube(link: String): Boolean {
         val h = host(link).lowercase()
         return h == "youtu.be" || h == "youtube.com" || h.endsWith(".youtube.com") || h.endsWith("youtube-nocookie.com")

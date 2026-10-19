@@ -1,6 +1,6 @@
 """Tiny UI driver over adb + uiautomator.
   ui.py tap TEXT [--exact]     tap the first element whose text/description contains (or equals) TEXT
-  ui.py wait TEXT [SECONDS]    wait until TEXT is on screen ("A||B" waits for either)
+  ui.py wait TEXT [SECONDS] [--exact]  wait until TEXT is on screen ("A||B" waits for either)
   ui.py gone TEXT [SECONDS]    wait until TEXT is no longer on screen
   ui.py tapclass CLASS         tap the first element of that class (e.g. android.widget.EditText)
 """
@@ -45,10 +45,12 @@ elif cmd == 'tap':
     print('not found:', text)
     sys.exit(1)
 elif cmd in ('wait', 'gone'):
-    limit = float(sys.argv[3]) if len(sys.argv) > 3 else 60
+    exact = '--exact' in sys.argv
+    nums = [a for a in sys.argv[3:] if not a.startswith('--')]
+    limit = float(nums[0]) if nums else 60
     end = time.time() + limit
     while True:
-        f = find(text, False)
+        f = find(text, exact)
         if cmd == 'wait' and f:
             print('seen:', f[0])
             sys.exit(0)

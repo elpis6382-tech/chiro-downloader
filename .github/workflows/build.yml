@@ -1,9 +1,17 @@
 name: build
 
+# Every push: unit tests, build, publish the APK (light).
+# The emulator run (real engine downloads + tapping through the app) only when started by hand:
+#   Actions → build → Run workflow → device_tests = true
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      device_tests:
+        description: Run the engine and app tests on an Android emulator
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -21,6 +29,8 @@ jobs:
     # Pinned: the "latest" label moves to a new Ubuntu, and the NDK/emulator setup is known to work here.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      DEVICE_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.device_tests }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,12 +68,15 @@ jobs:
           ls -la app/src/main/jniLibs/*
 
       - name: Install ffmpeg
+        if: env.DEVICE_TESTS == 'true'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
       - name: Make the test web site (HLS page, direct links, a JavaScript player, download buttons)
+        if: env.DEVICE_TESTS == 'true'
         run: bash tools/make_test_media.sh build/testmedia
 
       - name: Start the test web server
+        if: env.DEVICE_TESTS == 'true'
         run: |
           nohup python3 tools/serve.py build/testmedia 8000 > server.log 2>&1 &
           sleep 2
@@ -72,7 +85,9 @@ jobs:
       - name: Unit tests, build app and device tests
         run: |
           set -o pipefail
-          ./gradlew --no-daemon testDebugUnitTest assembleDebug assembleDebugAndroidTest 2>&1 | tee build.log
+          TASKS="testDebugUnitTest assembleDebug"
+          [ "$DEVICE_TESTS" = "true" ] && TASKS="$TASKS assembleDebugAndroidTest"
+          ./gradlew --no-daemon $TASKS 2>&1 | tee build.log
 
       - name: Show build errors
         if: failure()
@@ -89,12 +104,14 @@ jobs:
           PY
 
       - name: Enable KVM for the emulator
+        if: env.DEVICE_TESTS == 'true'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
       - name: Run engine tests and the app on an Android 13 emulator
+        if: env.DEVICE_TESTS == 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 33
@@ -108,7 +125,7 @@ jobs:
             bash tools/e2e.sh
 
       - name: Publish screenshots of the app run (branch ci-screens)
-        if: always()
+        if: always() && env.DEVICE_TESTS == 'true'
         run: |
           [ -d shots ] || exit 0
           cat shots/result.txt || true
@@ -120,12 +137,13 @@ jobs:
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-screens
 
       - name: Report test results
-        if: always()
+        if: always() && env.DEVICE_TESTS == 'true'
         run: |
           python3 tools/report_failures.py || true
           test ! -f tests-failed
 
       - name: Check the downloaded files with ffprobe
+        if: env.DEVICE_TESTS == 'true'
         run: |
           ls -la test-output
           test -f test-output/engine-test.mp4
@@ -157,8 +175,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp app/build/outputs/apk/debug/app-arm64-v8a-debug.apk video-downloader.apk
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest video-downloader.apk \
-            --target "${GITHUB_SHA}" \
-            --title "영상 다운로더 1.0.${GITHUB_RUN_NUMBER}" \
-            --notes "폰에서 **video-downloader.apk**를 눌러 받은 뒤 설치하세요. 처음 한 번은 '출처를 알 수 없는 앱 설치'를 허용해야 해요. 새 버전은 지우지 않고 그대로 덮어 설치하면 돼요."
+          TITLE="영상 다운로더 1.1.${GITHUB_RUN_NUMBER}"
+          # The app reads "versionCode" from here to offer the update.
+          NOTES="폰에서 **video-downloader.apk**를 눌러 받은 뒤 설치하세요. 처음 한 번은 '출처를 알 수 없는 앱 설치'를 허용해야 해요. 다음부터는 앱 안의 [지금 업데이트]로 바로 바뀌어요.
+
+          versionCode: $((100 + GITHUB_RUN_NUMBER))"
+          # The release is kept and only its file replaced, so the download link never goes missing.
+          if gh release view latest > /dev/null 2>&1; then
+            gh release upload latest video-downloader.apk --clobber
+            gh release edit latest --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create latest video-downloader.apk --target "${GITHUB_SHA}" --title "$TITLE" --notes "$NOTES"
+          fi

@@ -174,6 +174,37 @@ object Engine {
         }
     }
 
+    /** Title, picture and formats of [url] without downloading anything (the link box preview). */
+    fun info(ctx: Context, url: String, pid: String): Preview {
+        init(ctx)
+        val req = YoutubeDLRequest(url)
+        req.addOption("--cache-dir", File(ctx.filesDir, "yt-dlp-cache").absolutePath)
+        // -J prints everything yt-dlp knows as JSON; a playlist only lists its videos instead of opening each.
+        req.addCommands(baseArgs(ctx) + listOf("-J", "--flat-playlist"))
+        val res = YoutubeDL.getInstance().execute(req, pid)
+        return parsePreview(url, JSONObject(res.out))
+    }
+
+    private fun JSONObject.str(k: String): String? = if (has(k) && !isNull(k)) optString(k).ifBlank { null } else null
+    private fun JSONObject.num(k: String): Double? = if (has(k) && !isNull(k)) optDouble(k).takeIf { !it.isNaN() } else null
+
+    private fun parsePreview(url: String, j: JSONObject): Preview {
+        val uploader = j.str("uploader") ?: j.str("channel")
+        if (j.str("_type") == "playlist" || j.str("_type") == "multi_video") {
+            val count = j.num("playlist_count")?.toInt() ?: j.optJSONArray("entries")?.length() ?: 0
+            return Preview(url, j.str("title"), uploader, null, j.str("thumbnail"), count, emptyMap(), null)
+        }
+        fun fmt(f: JSONObject) = FormatInfo(
+            f.str("vcodec"), f.str("acodec"), f.num("width")?.toInt(), f.num("height")?.toInt(),
+            f.num("fps"), f.num("tbr"), (f.num("filesize") ?: f.num("filesize_approx"))?.toLong(), f.str("ext"),
+        )
+        val arr = j.optJSONArray("formats")
+        val formats = if (arr == null || arr.length() == 0) listOf(fmt(j))
+        else (0 until arr.length()).map { fmt(arr.getJSONObject(it)) }.filterNot { it.ext == "mhtml" }
+        val duration = j.num("duration")
+        return Preview(url, j.str("title"), uploader, duration, j.str("thumbnail"), null, Estimate.choices(formats, duration), Estimate.maxRes(formats))
+    }
+
     /** Makes a page title safe to use as yt-dlp's output name. */
     fun outputName(title: String): String =
         title.replace(Regex("""[\\/:*?"<>|\u0000-\u001f]"""), " ")

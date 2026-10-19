@@ -12,8 +12,11 @@ android {
         applicationId = "io.github.apostolichiro.videodl"
         minSdk = 29
         targetSdk = 34
-        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-        versionName = "1.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+        // Builds from the first repository went up to 1.0.8 (version code 8); this one starts above that,
+        // so new versions always install over old ones.
+        val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
+        versionCode = 100 + run
+        versionName = "1.1.$run"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The emulator reaches the CI machine's test web server here.
         testInstrumentationRunnerArguments["mediaHost"] = "http://10.0.2.2:8000"
