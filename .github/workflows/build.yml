@@ -181,6 +181,8 @@ jobs:
 
           versionCode: $((100 + GITHUB_RUN_NUMBER))"
           # The release is kept and only its file replaced, so the download link never goes missing.
+          # A leftover "devkit" pre-release (libraries for local type checks) isn't for the phone.
+          gh release delete devkit --cleanup-tag -y > /dev/null 2>&1 || true
           if gh release view latest > /dev/null 2>&1; then
             gh release upload latest video-downloader.apk --clobber
             gh release edit latest --title "$TITLE" --notes "$NOTES"

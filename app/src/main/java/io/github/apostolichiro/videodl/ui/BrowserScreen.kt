@@ -100,6 +100,7 @@ import io.github.apostolichiro.videodl.WebTab
 import io.github.apostolichiro.videodl.engine.Links
 import io.github.apostolichiro.videodl.engine.Shortcut
 import io.github.apostolichiro.videodl.engine.Web
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** The 홈 tab: the browser. A new tab shows the home page (search, sites, recent downloads). */
@@ -165,7 +166,17 @@ private fun AddressBar(tab: WebTab, tabs: Tabs, app: AppActions, onTabs: () -> U
     var field by remember(tab.id) { mutableStateOf(TextFieldValue("")) }
     var menu by remember { mutableStateOf(false) }
     var addShortcut by remember { mutableStateOf(false) }
+    var selectAll by remember { mutableStateOf(0) }
     val home = url.isEmpty()
+
+    // The tap that focuses the box also drops the cursor where the finger was; select everything again
+    // right after, so typing replaces the old address (unless typing already started).
+    LaunchedEffect(selectAll) {
+        if (selectAll == 0) return@LaunchedEffect
+        val before = field.text
+        delay(150)
+        if (editing && field.text == before) field = field.copy(selection = TextRange(0, before.length))
+    }
     val loading = !home && progress in 1..99
 
     // A new page started loading (a link on the page, or a site from the home page): done typing.
@@ -214,6 +225,7 @@ private fun AddressBar(tab: WebTab, tabs: Tabs, app: AppActions, onTabs: () -> U
                             val full = if (home) "" else url
                             field = TextFieldValue(full, TextRange(0, full.length))
                             editing = true
+                            selectAll++
                         } else if (!f.isFocused) {
                             editing = false
                         }

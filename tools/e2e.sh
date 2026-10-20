@@ -10,11 +10,12 @@ DIR="/sdcard/Download/Chiro video"
 log() { echo "$*" | tee -a shots/result.txt; }
 shot() { adb exec-out screencap -p > "shots/$1.png"; }
 ui() { python3 tools/ui.py "$@" 2>&1 | tee -a shots/result.txt; return "${PIPESTATUS[0]}"; }
-# Waits until a file whose name contains $1 shows up in the app's download folder.
+count() { adb shell "ls '$DIR/'" 2>/dev/null | grep -cF "$1"; }
+# Waits until there are more than $3 (default 0) files whose name contains $1 in the app's download folder.
 waitfile() {
   local end=$((SECONDS + ${2:-120}))
   while [ $SECONDS -lt $end ]; do
-    adb shell "ls '$DIR/'" 2>/dev/null | grep -qF "$1" && return 0
+    [ "$(count "$1")" -gt "${3:-0}" ] && return 0
     sleep 3
   done
   return 1
@@ -24,12 +25,19 @@ share() {
   adb shell "am start -W -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT '$1' -n $PKG/.ShareActivity" >/dev/null
   sleep 2
 }
-# Types an address into the browser's address bar and opens it.
+# Types an address into the browser's address bar and opens it (the old address gets selected on tap).
 browse() {
   ui tap "주소창" >/dev/null || ui tapclass android.widget.EditText >/dev/null
   sleep 1
   adb shell input text "$1"
   adb shell input keyevent KEYCODE_ENTER
+}
+# Closes the download sheet if one is still open (it covers everything else).
+nosheet() {
+  if python3 tools/ui.py wait "다운로드||그래도 다운로드" 1 --exact >/dev/null 2>&1; then
+    adb shell input keyevent KEYCODE_BACK
+    sleep 1
+  fi
 }
 crashed() { adb shell pidof $PKG >/dev/null 2>&1 || { log "APP NOT RUNNING (crashed?) at: $1"; adb logcat -d -b crash | tail -40 >> shots/result.txt; adb shell am start -W -n $PKG/.MainActivity >/dev/null; sleep 3; }; }
 
@@ -43,6 +51,7 @@ sleep 4
 shot 01_home
 
 # 1) Share a web page that has an HLS video on it: downloads without opening the app.
+before=$(count "테스트 영상")
 share "look at this http://10.0.2.2:8000/page.html"
 adb shell am start -W -n $PKG/.MainActivity >/dev/null
 ui tap "받는 중" --exact >/dev/null
@@ -52,7 +61,7 @@ adb shell cmd statusbar expand-notifications
 sleep 2
 shot 03_notification
 adb shell cmd statusbar collapse
-waitfile "테스트 영상" 240 && log "share page: ok" || log "share page: FAILED"
+waitfile "테스트 영상" 240 "$before" && log "share page: ok" || log "share page: FAILED"
 crashed "share"
 
 # 2) Browser: open a direct video link, press the blue button, pick 소리만 in the sheet.
@@ -87,10 +96,12 @@ shot 06_sheet_dup
 adb shell input keyevent KEYCODE_BACK
 sleep 1
 
+nosheet
 # 3) A page whose player builds the stream address in JavaScript: the button lights up once it plays.
 browse "10.0.2.2:8000/js.html"
 sleep 8
 shot 07_js_page
+ui wait "js.html" 5 >/dev/null && log "address replaced on typing: ok" || log "address replaced on typing: FAILED"
 ui tap "이 페이지 영상 받기" >/dev/null
 ui wait "스트리밍 영상 1||영상 파일 1" 40 >/dev/null && log "page streams listed: ok" || log "page streams listed: FAILED"
 sleep 2
@@ -99,6 +110,7 @@ ui tap "받기" --exact >/dev/null && log "stream button: tapped" || log "stream
 waitfile "자바스크립트 영상" 150 && log "stream download (page title): ok" || log "stream download (page title): FAILED"
 crashed "stream"
 
+nosheet
 # 4) The site's own download buttons: a video (goes through the engine) and a document (Android's downloader).
 ui tap "자료실로 가기" >/dev/null && log "site link: tapped" || log "site link: FAILED"
 sleep 5
@@ -109,6 +121,7 @@ waitfile "clip.mp4" 120 && log "site video download: ok" || log "site video down
 ui tap "문서 다운로드" >/dev/null
 waitfile "notes" 60 && log "site file download: ok" || log "site file download: FAILED"
 
+nosheet
 # 5) Tabs: open a second one.
 ui tap "탭 1개" >/dev/null && sleep 2 && shot 10_tabs
 ui tap "새 탭" --exact >/dev/null
@@ -117,6 +130,7 @@ ui wait "탭 2개" 10 >/dev/null && log "tabs: ok" || log "tabs: FAILED"
 shot 11_new_tab
 crashed "tabs"
 
+nosheet
 # 6) Pause and go on: a slow download is paused half-way, then finished; the file must be exact.
 share "http://10.0.2.2:8000/slow/big.mp4"
 adb shell am start -W -n $PKG/.MainActivity >/dev/null
@@ -140,6 +154,7 @@ fi
 shot 14_after_resume
 crashed "pause"
 
+nosheet
 # 7) Files: the list, then the built-in player.
 ui tap "파일" --exact >/dev/null
 sleep 2
@@ -156,6 +171,7 @@ crashed "player"
 adb shell input keyevent KEYCODE_BACK
 sleep 2
 
+nosheet
 # 8) Settings, and the home page with recent downloads.
 ui tap "설정" --exact >/dev/null
 ui wait "광고·팝업 차단" 10 >/dev/null && log "settings: ok" || log "settings: FAILED"
