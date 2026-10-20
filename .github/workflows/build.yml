@@ -175,11 +175,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp app/build/outputs/apk/debug/app-arm64-v8a-debug.apk video-downloader.apk
-          TITLE="영상 다운로더 1.1.${GITHUB_RUN_NUMBER}"
+          TITLE="영상 다운로더 1.2.${GITHUB_RUN_NUMBER}"
           # The app reads "versionCode" from here to offer the update.
           NOTES="폰에서 **video-downloader.apk**를 눌러 받은 뒤 설치하세요. 처음 한 번은 '출처를 알 수 없는 앱 설치'를 허용해야 해요. 다음부터는 앱 안의 [지금 업데이트]로 바로 바뀌어요.
 
-          versionCode: $((100 + GITHUB_RUN_NUMBER))"
+          versionCode: $((200 + GITHUB_RUN_NUMBER))"
           # The release is kept and only its file replaced, so the download link never goes missing.
           # A leftover "devkit" pre-release (libraries for local type checks) isn't for the phone.
           gh release delete devkit --cleanup-tag -y > /dev/null 2>&1 || true
