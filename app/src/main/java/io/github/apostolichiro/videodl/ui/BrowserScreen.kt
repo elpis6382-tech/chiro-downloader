@@ -299,8 +299,8 @@ private fun DownloadButton(tab: WebTab, modifier: Modifier) {
     val title by tab.title.collectAsStateWithLifecycle()
     val url by tab.url.collectAsStateWithLifecycle()
     val ready = info is InfoState.Ready
-    // The page's video when it was found, otherwise the streams the page played.
-    val count = if (ready) 1 else found.size
+    // One video to download: found by its address, or one the page played.
+    val count = if (ready || found.isNotEmpty()) 1 else 0
     val active = count > 0
     val bounce = remember { Animatable(1f) }
     LaunchedEffect(active) {

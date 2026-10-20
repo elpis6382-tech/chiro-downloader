@@ -181,45 +181,6 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                     Text(label, color = Color.White, style = MaterialTheme.typography.titleMedium)
                 }
             }
-
-            // Only needed when the page address itself gave no video: then the streams the page played are the way in.
-            if (req.found.isNotEmpty() && info is InfoState.Failed) {
-                Text(
-                    "페이지가 재생한 영상", style = MaterialTheme.typography.titleSmall, color = colors.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 24.dp),
-                )
-                Text(
-                    "주소로는 영상을 못 찾아서, 이 페이지가 실제로 재생한 영상을 보여줘요. 같은 영상이 화질별로 여러 개 보일 수 있어요.",
-                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
-                )
-                req.found.take(6).forEachIndexed { i, stream ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(36.dp).clip(CircleShape).background(colors.surfaceVariant), contentAlignment = Alignment.Center) {
-                            Icon(AppIcons.Movie, null, tint = colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                if (Sniff.kind(stream) == 2) "스트리밍 영상 ${i + 1}" else "영상 파일 ${i + 1}",
-                                style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
-                            )
-                            Text(
-                                Links.host(stream) + " · " + stream.substringBefore('?').substringAfterLast('/').take(40),
-                                style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        TextButton(onClick = {
-                            start(
-                                NewJob(
-                                    url = stream, quality = quality, origin = Origin.STREAM, referer = req.referer ?: req.url,
-                                    pageTitle = req.pageTitle ?: preview?.title, userAgent = req.userAgent,
-                                    title = req.pageTitle ?: preview?.title, thumbnail = preview?.thumbnail,
-                                ),
-                            )
-                        }) { Text("받기") }
-                    }
-                }
-            }
         }
     }
 }
@@ -254,7 +215,7 @@ private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?) {
                     }
                 }
                 is InfoState.Failed -> Text(
-                    if (req.found.isNotEmpty()) "페이지 주소로는 영상을 못 찾았어요. 아래 재생된 영상에서 골라 받을 수 있어요."
+                    if (req.found.isNotEmpty()) "[다운로드]를 누르면 이 페이지가 재생한 영상으로 받아요."
                     else "바로 받을 영상을 못 찾았어요. 영상을 한 번 재생한 뒤 다시 눌러 보거나, 그래도 [다운로드]를 눌러 보세요.",
                     style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 3.dp),
                 )

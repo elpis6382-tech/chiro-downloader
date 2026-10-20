@@ -102,10 +102,11 @@ sleep 8
 shot 07_js_page
 ui wait "js.html" 5 >/dev/null && log "address replaced on typing: ok" || log "address replaced on typing: FAILED"
 ui tap "이 페이지 영상 받기" >/dev/null
-ui wait "스트리밍 영상 1||영상 파일 1" 60 >/dev/null && log "page streams listed (page itself gave nothing): ok" || log "page streams listed: FAILED"
+ui wait "이 페이지가 재생한 영상으로 받아요" 60 >/dev/null && log "page itself gave nothing, will use the played stream: ok" || log "played-stream note: FAILED"
+python3 tools/ui.py wait "스트리밍 영상" 1 >/dev/null 2>&1 && log "stream list removed: FAILED" || log "stream list removed: ok"
 sleep 2
 shot 08_js_sheet
-ui tap "받기" --exact >/dev/null && log "stream button: tapped" || log "stream button: FAILED"
+ui tap "다운로드" --exact >/dev/null && log "download button: tapped" || log "download button: FAILED"
 waitfile "자바스크립트 영상" 150 && log "stream download (page title): ok" || log "stream download (page title): FAILED"
 crashed "stream"
 
