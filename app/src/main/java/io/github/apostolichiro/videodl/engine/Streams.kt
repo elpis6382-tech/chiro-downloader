@@ -54,6 +54,64 @@ object Streams {
         ref
     }
 
+    /** How one segment is encrypted (AES-128 with the key at [uri]), if it is. */
+    data class Key(val method: String, val uri: String?, val iv: String?)
+
+    data class Segment(val url: String, val sequence: Long, val key: Key?, val map: String?)
+
+    /** A media playlist's pieces in order; [unsupported] says why it can't be downloaded piece by piece. */
+    data class Media(val segments: List<Segment>, val unsupported: String?)
+
+    private val attr = Regex("""([A-Z0-9-]+)=("([^"]*)"|[^,]*)""")
+
+    private fun attrs(line: String): Map<String, String> =
+        attr.findAll(line.substringAfter(':')).associate { m -> m.groupValues[1] to (m.groups[3]?.value ?: m.groupValues[2]) }
+
+    fun media(text: String, base: String): Media {
+        val segments = mutableListOf<Segment>()
+        var sequence = 0L
+        var key: Key? = null
+        var map: String? = null
+        var unsupported: String? = null
+        var expectSegment = false
+        for (raw in text.lineSequence()) {
+            val l = raw.trim()
+            if (l.isEmpty()) continue
+            when {
+                l.startsWith("#EXT-X-MEDIA-SEQUENCE:", true) -> sequence = l.substringAfter(':').trim().toLongOrNull() ?: 0
+                l.startsWith("#EXT-X-KEY:", true) -> {
+                    val a = attrs(l)
+                    val method = a["METHOD"]?.uppercase() ?: "NONE"
+                    key = when (method) {
+                        "NONE" -> null
+                        "AES-128" -> Key(method, a["URI"]?.let { resolve(base, it) }, a["IV"])
+                        else -> {
+                            unsupported = "encryption $method"
+                            Key(method, null, null)
+                        }
+                    }
+                }
+                l.startsWith("#EXT-X-MAP:", true) -> map = attrs(l)["URI"]?.let { resolve(base, it) }
+                l.startsWith("#EXT-X-BYTERANGE", true) -> unsupported = "byte ranges"
+                l.startsWith("#EXTINF", true) -> expectSegment = true
+                l.startsWith("#") -> Unit
+                else -> {
+                    // A line that isn't a tag is a piece (normally right after its #EXTINF).
+                    segments += Segment(resolve(base, l), sequence + segments.size, key, map)
+                    expectSegment = false
+                }
+            }
+        }
+        return Media(segments, unsupported)
+    }
+
+    /** The IV for AES-128: given in the playlist, or the segment's sequence number. */
+    fun iv(key: Key, sequence: Long): ByteArray {
+        val hex = key.iv?.removePrefix("0x")?.removePrefix("0X")
+        if (hex != null && hex.length == 32) return ByteArray(16) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+        return ByteArray(16).also { b -> for (i in 0 until 8) b[15 - i] = (sequence shr (8 * i)).toByte() }
+    }
+
     /** The best variant of a master playlist (highest resolution, then bandwidth). */
     fun best(variants: List<Variant>): Variant? = variants.maxWithOrNull(compareBy<Variant>({ it.height ?: 0 }, { it.bandwidth }))
 

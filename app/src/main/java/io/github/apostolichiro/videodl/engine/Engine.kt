@@ -274,37 +274,44 @@ object Engine {
      * gets past stream pieces disguised as pictures (ffmpeg skips to the video data). Returns the new file, or null.
      */
     fun repairToMp4(ctx: Context, f: File): File? {
-        init(ctx)
         val out = File(f.parentFile, f.nameWithoutExtension + ".fixed.mp4")
+        if (!remux(ctx, f, out, forceTs = true)) return null
+        // Keep the original name.
+        val final = File(f.parentFile, f.name)
+        f.delete()
+        return if (out.renameTo(final)) final else out
+    }
+
+    /**
+     * Copies the video and sound of [input] into a real MP4 at [out] with ffmpeg (no re-encoding).
+     * With [forceTs] the input is read as MPEG-TS, which also gets past pieces disguised as pictures.
+     */
+    fun remux(ctx: Context, input: File, out: File, forceTs: Boolean): Boolean {
+        init(ctx)
         out.delete()
         val ffmpeg = File(ctx.applicationInfo.nativeLibraryDir, "libffmpeg.so")
-        if (!ffmpeg.isFile) return null
+        if (!ffmpeg.isFile) return false
         val base = File(ctx.noBackupFilesDir, YoutubeDL.baseName)
         return try {
-            val pb = ProcessBuilder(
-                ffmpeg.absolutePath, "-hide_banner", "-loglevel", "error", "-y",
-                "-f", "mpegts", "-i", f.absolutePath,
-                "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart", out.absolutePath,
-            ).redirectErrorStream(true)
+            val cmd = mutableListOf(ffmpeg.absolutePath, "-hide_banner", "-loglevel", "error", "-y")
+            if (forceTs) cmd += listOf("-f", "mpegts")
+            cmd += listOf("-i", input.absolutePath, "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart", out.absolutePath)
+            val pb = ProcessBuilder(cmd).redirectErrorStream(true)
             pb.environment()["LD_LIBRARY_PATH"] =
                 "${base.absolutePath}/packages/ffmpeg/usr/lib:${base.absolutePath}/packages/python/usr/lib"
             val p = pb.start()
             val log = p.inputStream.bufferedReader().readText()
             val code = p.waitFor()
-            if (code == 0 && out.length() > 1024 && !needsRepair(out)) {
-                // Keep the original name.
-                val final = File(f.parentFile, f.name)
-                f.delete()
-                if (out.renameTo(final)) final else out
-            } else {
-                Log.w(TAG, "repair failed ($code): ${log.takeLast(500)}")
+            if (code == 0 && out.length() > 1024 && !needsRepair(out)) true
+            else {
+                Log.w(TAG, "remux failed ($code): ${log.takeLast(500)}")
                 out.delete()
-                null
+                false
             }
         } catch (e: Exception) {
-            Log.w(TAG, "repair failed", e)
+            Log.w(TAG, "remux failed", e)
             out.delete()
-            null
+            false
         }
     }
 

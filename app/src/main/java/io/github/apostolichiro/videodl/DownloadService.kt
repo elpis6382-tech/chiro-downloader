@@ -10,6 +10,7 @@ import android.os.SystemClock
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import io.github.apostolichiro.videodl.engine.Direct
 import io.github.apostolichiro.videodl.engine.Engine
 import io.github.apostolichiro.videodl.engine.Errors
 import io.github.apostolichiro.videodl.engine.Event
@@ -153,9 +154,21 @@ class DownloadService : Service() {
             var updated = false
             // A paused download carries on with the pieces it already has; any later attempt starts clean
             // (a file aria2c left half-written must not be continued by another downloader).
-            var outcome = runDownload(job, req, work, fromFallback, fresh = !job.resume)
-            var attempts = 1
-            while (outcome.files.isEmpty() && outcome.error != null && !outcome.cancelled && !isCancelled(id) && attempts < 6) {
+            // A stream the browser saw a page play is first fetched the way the browser fetched it (some sites
+            // refuse yt-dlp's requests); yt-dlp is the backup. Everything else goes to yt-dlp first.
+            val directTried = mutableSetOf<String>()
+            var outcome = Engine.Outcome(emptyList(), "not started", false, null, false)
+            if (job.origin == Origin.STREAM) {
+                if (!job.resume) work.deleteRecursively()
+                directTried += job.url
+                outcome = runDirect(job, job.url, work)
+            }
+            var attempts = 0
+            if (outcome.files.isEmpty() && !outcome.cancelled && !isCancelled(id)) {
+                outcome = runDownload(job, req, work, fromFallback, fresh = !job.resume || job.origin == Origin.STREAM)
+                attempts = 1
+            }
+            while (outcome.files.isEmpty() && outcome.error != null && !outcome.cancelled && !isCancelled(id) && attempts in 1..5) {
                 val err = outcome.error
                 var next: Engine.Request? = null
                 when {
@@ -195,6 +208,17 @@ class DownloadService : Service() {
                 Store.update(id) { it.copy(status = Status.PREPARING, step = null, progress = null, speed = null, etaSec = null, doneBytes = null, totalBytes = null) }
                 outcome = runDownload(job, req, work, fromFallback, fresh = true)
                 attempts++
+            }
+            // yt-dlp couldn't: the streams the page played, fetched the browser's way.
+            if (outcome.files.isEmpty() && !outcome.cancelled && !isCancelled(id)) {
+                for (stream in job.fallbacks) {
+                    if (!directTried.add(stream)) continue
+                    val o = runDirect(job, stream, work)
+                    if (o.files.isNotEmpty() || o.cancelled || isCancelled(id)) {
+                        outcome = o
+                        break
+                    }
+                }
             }
             if (outcome.cancelled || isCancelled(id)) Engine.killLeftovers(work)
             if (isPaused(id)) {
@@ -246,6 +270,42 @@ class DownloadService : Service() {
             cookieFile.delete()
             cancelRequested.remove(id)
             pauseRequested.remove(id)
+        }
+    }
+
+    /** Fetches [url] like the in-app browser did (its cookies, User-Agent, the page as Referer/Origin). */
+    private fun runDirect(job: Job, url: String, work: File): Engine.Outcome {
+        val id = job.id
+        Store.update(id) { it.copy(status = Status.DOWNLOADING, step = null, progress = null, speed = null, etaSec = null) }
+        notifyProgress(force = true)
+        val page = job.referer
+        val origin = page?.let { Regex("""^https?://[^/?#]+""", RegexOption.IGNORE_CASE).find(it)?.value }
+        val headers = Direct.Headers(job.userAgent, page, origin) { u ->
+            try {
+                android.webkit.CookieManager.getInstance().getCookie(u)
+            } catch (_: Exception) {
+                null
+            }
+        }
+        return try {
+            val f = Direct.download(
+                this, url, headers, File(work, "direct"), job.pageTitle ?: job.title ?: "video",
+                stopped = { isCancelled(id) },
+            ) { done, total, fraction, speed ->
+                Store.update(id) {
+                    it.copy(
+                        status = Status.DOWNLOADING, doneBytes = done, totalBytes = total, progress = fraction, speed = speed,
+                        etaSec = if (speed != null && speed > 0 && total != null && total > done) ((total - done) / speed).toLong() else null,
+                    )
+                }
+                notifyProgress()
+            }
+            Engine.Outcome(listOf(f), null, false, null, true)
+        } catch (e: Direct.Stopped) {
+            Engine.Outcome(emptyList(), null, true, null, true)
+        } catch (e: Exception) {
+            android.util.Log.w("VideoDl", "direct download of $url failed", e)
+            Engine.Outcome(emptyList(), e.message ?: e.toString(), false, "direct: $e", false)
         }
     }
 
