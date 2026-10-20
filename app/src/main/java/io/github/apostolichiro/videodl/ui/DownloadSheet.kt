@@ -52,6 +52,7 @@ import io.github.apostolichiro.videodl.Infos
 import io.github.apostolichiro.videodl.Job
 import io.github.apostolichiro.videodl.NewJob
 import io.github.apostolichiro.videodl.Origin
+import io.github.apostolichiro.videodl.QuickMeta
 import io.github.apostolichiro.videodl.SheetRequest
 import io.github.apostolichiro.videodl.Status
 import io.github.apostolichiro.videodl.Store
@@ -86,6 +87,9 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
     }
     val info = if (req.info != null) shared ?: InfoState.Loading else own ?: InfoState.Loading
     val preview = (info as? InfoState.Ready)?.preview
+    val quick by produceState<QuickMeta.Meta?>(null, req.url) {
+        value = withContext(Dispatchers.IO) { QuickMeta.fetch(req.url) }
+    }
 
     var quality by remember { mutableStateOf(Store.quality) }
     val jobs by Store.jobs.collectAsStateWithLifecycle()
@@ -115,7 +119,7 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
         },
     ) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            Header(info, req)
+            Header(info, req, quick)
             Spacer(Modifier.height(18.dp))
 
             val shown = Quality.entries.filter { preview == null || preview.isPlaylist || preview.shows(it) }
@@ -206,26 +210,25 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
 }
 
 @Composable
-private fun Header(info: InfoState, req: SheetRequest) {
+private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?) {
     val colors = MaterialTheme.colorScheme
+    val p = (info as? InfoState.Ready)?.preview
+    // While yt-dlp is still looking, the page's own title and picture stand in.
+    val title = p?.title ?: quick?.title ?: req.pageTitle ?: Links.host(req.url)
+    val picture = p?.thumbnail ?: req.pageImage ?: quick?.image
     Row(verticalAlignment = Alignment.CenterVertically) {
-        val p = (info as? InfoState.Ready)?.preview
-        Box {
-            ThumbBox(netImage(p?.thumbnail), 128.dp, 72.dp, AppIcons.Movie, p?.duration?.let { durationText(it.toLong()) })
-            if (info is InfoState.Loading) {
-                CircularProgressIndicator(Modifier.align(Alignment.Center).size(24.dp), strokeWidth = 2.5.dp, color = colors.primary)
-            }
-        }
+        ThumbBox(netImage(picture), 128.dp, 72.dp, AppIcons.Movie, p?.duration?.let { durationText(it.toLong()) })
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f).heightIn(min = 72.dp), verticalArrangement = Arrangement.Center) {
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             when (info) {
-                InfoState.Loading -> {
-                    Text(req.pageTitle ?: Links.host(req.url), style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("영상 정보를 확인하는 중…", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 3.dp))
+                InfoState.Loading -> Row(Modifier.padding(top = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = colors.primary)
+                    Spacer(Modifier.width(6.dp))
+                    Text("용량 확인 중 · 기다리지 않고 받아도 돼요", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 is InfoState.Ready -> {
                     val pv = info.preview
-                    Text(pv.title ?: req.pageTitle ?: "제목 없음", style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     val meta = listOfNotNull(
                         pv.uploader,
                         pv.playlistCount?.let { "재생목록 · 영상 ${it}개" },
@@ -235,14 +238,11 @@ private fun Header(info: InfoState, req: SheetRequest) {
                         Text(meta, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
                     }
                 }
-                is InfoState.Failed -> {
-                    Text(req.pageTitle ?: Links.host(req.url), style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        if (req.found.isNotEmpty()) "페이지 주소로는 영상을 못 찾았어요. 아래 재생된 영상에서 골라 받을 수 있어요."
-                        else "바로 받을 영상을 못 찾았어요. 영상을 한 번 재생한 뒤 다시 눌러 보거나, 그래도 [다운로드]를 눌러 보세요.",
-                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 3.dp),
-                    )
-                }
+                is InfoState.Failed -> Text(
+                    if (req.found.isNotEmpty()) "페이지 주소로는 영상을 못 찾았어요. 아래 재생된 영상에서 골라 받을 수 있어요."
+                    else "바로 받을 영상을 못 찾았어요. 영상을 한 번 재생한 뒤 다시 눌러 보거나, 그래도 [다운로드]를 눌러 보세요.",
+                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 3.dp),
+                )
             }
         }
     }

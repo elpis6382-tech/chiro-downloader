@@ -144,6 +144,8 @@ class DownloadService : Service() {
                     else -> null
                 },
                 singleItem = job.origin == Origin.BROWSER,
+                // The sheet already looked the video up: start from that instead of looking again.
+                infoJson = if (job.origin == Origin.LINK || job.origin == Origin.BROWSER) Infos.infoJsonFor(job.url) else null,
             )
             // Streams keep the page's title instead of whatever name the stream file has.
             var fromFallback = job.origin == Origin.STREAM
@@ -157,6 +159,8 @@ class DownloadService : Service() {
                 val err = outcome.error
                 var next: Engine.Request? = null
                 when {
+                    // The saved lookup may be too old (video addresses expire): look the video up again.
+                    req.infoJson != null -> next = req.copy(infoJson = null)
                     // Many connections at once failed in the middle of the download: one connection.
                     req.fast && outcome.started -> next = req.copy(fast = false)
                     // The site wants a login and the in-app browser has one.

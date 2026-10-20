@@ -98,6 +98,8 @@ data class SheetRequest(
     val found: List<String> = emptyList(),
     /** A lookup the browser already started for this page. */
     val info: StateFlow<InfoState?>? = null,
+    /** The page's own picture (og:image), shown until the lookup is done. */
+    val pageImage: String? = null,
 )
 
 sealed interface EngineState {

@@ -187,7 +187,14 @@ class MainActivity : ComponentActivity(), FullscreenHost {
             if (stamp == Store.clipSeenAt) return
             Store.clipSeenAt = stamp
             val link = Links.extract(readClipboard()) ?: return
-            if (Downloads.alreadyHave(this, link, Store.quality) == null) Store.clipLink.value = link
+            if (Downloads.alreadyHave(this, link, Store.quality) == null) {
+                Store.clipLink.value = link
+                // Look it up right away, so the sheet is ready by the time [받기] is pressed.
+                lifecycleScope.launch {
+                    Infos.fetch(applicationContext, link)
+                    QuickMeta.fetch(link)
+                }
+            }
         } catch (_: Exception) {
         }
     }

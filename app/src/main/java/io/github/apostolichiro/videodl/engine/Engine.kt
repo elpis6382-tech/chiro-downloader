@@ -112,6 +112,8 @@ object Engine {
         val fast: Boolean = true,
         /** Only the first video when the page turns out to be a list (the browser's "this video" button). */
         val singleItem: Boolean = false,
+        /** What the preview already found out about the video: the download starts right away instead of looking again. */
+        val infoJson: File? = null,
     )
 
     /**
@@ -130,9 +132,10 @@ object Engine {
         if (fresh) workDir.deleteRecursively()
         workDir.mkdirs()
         val list = File(workDir, ".files.txt")
-        val req = YoutubeDLRequest(r.url)
+        val req = if (r.infoJson != null) YoutubeDLRequest(emptyList<String>()) else YoutubeDLRequest(r.url)
         req.addOption("--cache-dir", File(ctx.filesDir, "yt-dlp-cache").absolutePath)
         val args = baseArgs(ctx).toMutableList()
+        r.infoJson?.let { args += listOf("--load-info-json", it.absolutePath) }
         args += listOf(
             "-P", workDir.absolutePath,
             "--print-to-file", "after_move:filepath", list.absolutePath,
@@ -177,19 +180,33 @@ object Engine {
         }
     }
 
-    /** Title, picture and formats of [url] without downloading anything (the link box preview). */
-    fun info(ctx: Context, url: String, pid: String, cookies: File? = null, referer: String? = null, userAgent: String? = null): Preview {
+    /**
+     * Title, picture and formats of [url] without downloading anything (the download sheet's preview).
+     * With [quickYouTube], YouTube is asked only as the visionOS app, which needs no JavaScript challenge:
+     * that step runs in QuickJS on the phone and is by far the slowest part of looking a video up.
+     * Everything yt-dlp found is written to [saveTo], so the download can start from it.
+     */
+    fun info(
+        ctx: Context, url: String, pid: String, cookies: File? = null, referer: String? = null, userAgent: String? = null,
+        quickYouTube: Boolean = false, saveTo: File? = null,
+    ): Preview {
         init(ctx)
         val req = YoutubeDLRequest(url)
         req.addOption("--cache-dir", File(ctx.filesDir, "yt-dlp-cache").absolutePath)
         // -J prints everything yt-dlp knows as JSON; a playlist only lists its videos instead of opening each.
         val args = (baseArgs(ctx) + listOf("-J", "--flat-playlist")).toMutableList()
+        if (quickYouTube) args += listOf("--extractor-args", "youtube:player_client=visionos")
         cookies?.let { args += listOf("--cookies", it.absolutePath) }
         referer?.let { args += listOf("--referer", it) }
         userAgent?.let { args += listOf("--user-agent", it) }
         req.addCommands(args)
         val res = YoutubeDL.getInstance().execute(req, pid)
-        return parsePreview(url, JSONObject(res.out))
+        val json = JSONObject(res.out)
+        saveTo?.let { f ->
+            f.parentFile?.mkdirs()
+            f.writeText(res.out)
+        }
+        return parsePreview(url, json)
     }
 
     private fun JSONObject.str(k: String): String? = if (has(k) && !isNull(k)) optString(k).ifBlank { null } else null

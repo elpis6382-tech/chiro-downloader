@@ -49,6 +49,8 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
     /** Looked up ahead of time on pages known to hold one video, so the download sheet opens ready. */
     val info = MutableStateFlow<InfoState?>(null)
     val snapshot = MutableStateFlow<Bitmap?>(null)
+    /** The page's own picture (og:image), for the download sheet. */
+    val pageImage = MutableStateFlow<String?>(null)
 
     private var pending: String? = startUrl?.takeIf { it.isNotBlank() }
     internal var view: WebView? = null
@@ -136,6 +138,22 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
         }
     }
 
+    /** Reads the page's og:image (pages that change without reloading get a moment to update it first). */
+    internal fun readMeta(delayMs: Long = 0) {
+        val v = view ?: return
+        v.postDelayed({
+            if (view !== v) return@postDelayed
+            v.evaluateJavascript(META_JS) { r ->
+                val img = try {
+                    if (r == null || r == "null") null else org.json.JSONTokener(r).nextValue() as? String
+                } catch (_: Exception) {
+                    null
+                }
+                pageImage.value = img?.takeIf { it.startsWith("http") }
+            }
+        }, delayMs)
+    }
+
     /** Starts the lookup now (the person pressed the download button on a page that wasn't looked up yet). */
     fun lookUpNow() {
         val u = url.value
@@ -154,6 +172,11 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
         view = null
     }
 }
+
+private const val META_JS =
+    "(function(){var q=function(n){var e=document.querySelector('meta[property=\"'+n+'\"],meta[name=\"'+n+'\"]');" +
+        "return e&&e.content?e.content:null};var u=q('og:image')||q('twitter:image');" +
+        "return u?new URL(u,location.href).href:null})()"
 
 /** The app's browser: any number of tabs, one in front. */
 @SuppressLint("SetJavaScriptEnabled")
@@ -304,18 +327,21 @@ class Tabs(
 
             override fun onPageStarted(view: WebView, pageUrl: String, favicon: Bitmap?) {
                 tab.found.value = emptyList()
+                tab.pageImage.value = null
                 tab.onUrl(pageUrl)
             }
 
             override fun onPageFinished(view: WebView, pageUrl: String) {
                 tab.onUrl(view.url ?: pageUrl)
                 view.title?.takeIf { it.isNotBlank() }?.let { tab.title.value = it }
+                tab.readMeta()
                 CookieManager.getInstance().flush()
             }
 
             override fun doUpdateVisitedHistory(view: WebView, pageUrl: String, isReload: Boolean) {
                 // Single-page sites (YouTube, Instagram...) change the address without loading a new page.
                 tab.onUrl(pageUrl)
+                tab.readMeta(1500)
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {

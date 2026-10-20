@@ -318,6 +318,7 @@ private fun DownloadButton(tab: WebTab, modifier: Modifier) {
                         SheetRequest(
                             url = url, origin = Origin.BROWSER, pageTitle = title.ifBlank { null }, referer = url,
                             userAgent = tab.view?.settings?.userAgentString, found = found, info = tab.info,
+                            pageImage = tab.pageImage.value,
                         ),
                     )
                 }

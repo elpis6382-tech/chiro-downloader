@@ -58,10 +58,10 @@ class EngineTest {
         assertTrue("yt-dlp did not find QuickJS: $out", line.contains("quickjs-ng"))
     }
 
-    private fun download(url: String, q: Quality, fast: Boolean = true, outName: String? = null): Pair<Engine.Outcome, List<Event>> {
+    private fun download(url: String, q: Quality, fast: Boolean = true, outName: String? = null, infoJson: File? = null): Pair<Engine.Outcome, List<Event>> {
         val events = mutableListOf<Event>()
         val work = File(ctx.cacheDir, "test-${q.name}")
-        val outcome = Engine.download(ctx, "test-${System.nanoTime()}", Engine.Request(url, q, fast = fast, outName = outName), work) { events += it }
+        val outcome = Engine.download(ctx, "test-${System.nanoTime()}", Engine.Request(url, q, fast = fast, outName = outName, infoJson = infoJson), work) { events += it }
         log("download $url ($q): files=${outcome.files.map { it.name }} error=${outcome.error}")
         if (outcome.error != null) log(outcome.log?.takeLast(3000) ?: "")
         return outcome to events
@@ -148,6 +148,24 @@ class EngineTest {
         assertTrue(p.title ?: "", p.title?.startsWith("테스트 영상") == true)
         val big = Engine.info(ctx, "$host/clip.mp4", "test-info-2")
         assertEquals("clip", big.title)
+    }
+
+    /** A download from the sheet starts from the preview's lookup instead of reading the page again. */
+    @Test
+    fun e3_downloadStartsFromThePreview() {
+        val json = File(ctx.cacheDir, "preview-test.json")
+        val t0 = System.currentTimeMillis()
+        val p = Engine.info(ctx, "$host/page.html", "test-info-3", saveTo = json)
+        log("preview took ${System.currentTimeMillis() - t0} ms, saved ${json.length()} bytes")
+        assertTrue(json.length() > 100)
+        val t1 = System.currentTimeMillis()
+        // The address given doesn't even exist: only the saved lookup can make this work.
+        val (outcome, _) = download("$host/nothing-here.html", Quality.BEST, infoJson = json)
+        log("download from saved lookup took ${System.currentTimeMillis() - t1} ms")
+        assertEquals(null, outcome.error)
+        assertEquals(1, outcome.files.size)
+        assertTrue(outcome.files[0].name, outcome.files[0].name.startsWith(p.title ?: "?"))
+        outcome.files.forEach { it.delete() }
     }
 
     /** Real sites from a data-center IP may be blocked, so this only reports what happened. */
