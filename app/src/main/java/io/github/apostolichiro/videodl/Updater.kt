@@ -26,7 +26,7 @@ sealed interface UpdateState {
 
 /** Keeps the app itself up to date from its GitHub releases, so there's no need to open the link again. */
 object Updater {
-    const val REPO = "chiro11111/chiro-video"
+    const val REPO = "elpis6382-tech/chiro-downloader"
     private const val API = "https://api.github.com/repos/$REPO/releases/tags/latest"
     private const val APK = "video-downloader.apk"
 
