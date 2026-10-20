@@ -36,6 +36,10 @@ object Lookups {
     private val ids = AtomicLong(1)
     @Volatile private var failures = 0
 
+    /** For the settings screen: whether lookups are fast right now. */
+    @Volatile var status: String = "꺼짐"
+        private set
+
     private fun base(ctx: Context) = File(ctx.noBackupFilesDir, YoutubeDL.baseName)
 
     /** Starts the helper in the background if it isn't running (call after the engine is set up). */
@@ -60,13 +64,19 @@ object Lookups {
         synchronized(lock) {
             process?.let { if (it.isAlive) return ready }
             // A helper that keeps dying isn't worth restarting every time.
-            if (failures >= 3) throw Unavailable("lookup helper failed too often")
+            if (failures >= 3) {
+                status = "꺼짐 (계속 실패)"
+                throw Unavailable("lookup helper failed too often")
+            }
             val app = ctx.applicationContext
             val base = base(app)
             val pythonDir = File(base, "packages/python")
             val python = File(app.applicationInfo.nativeLibraryDir, "libpython.so")
             val ytdlp = File(base, "${YoutubeDL.ytdlpDirName}/${YoutubeDL.ytdlpBin}")
-            if (!python.isFile || !ytdlp.isFile || !pythonDir.isDirectory) throw Unavailable("engine not set up yet")
+            if (!python.isFile || !ytdlp.isFile || !pythonDir.isDirectory) {
+                status = "준비 중"
+                throw Unavailable("engine not set up yet")
+            }
             val script = File(app.filesDir, "lookup_worker.py")
             app.assets.open("lookup_worker.py").use { s -> script.outputStream().use { s.copyTo(it) } }
 
@@ -80,6 +90,7 @@ object Lookups {
                 put("HOME", "${pythonDir.absolutePath}/usr")
                 put("TMPDIR", app.cacheDir.absolutePath)
             }
+            status = "켜는 중"
             val p = pb.start()
             val started = CompletableFuture<Boolean>()
             process = p
@@ -109,6 +120,7 @@ object Lookups {
                 if (id == 0L) {
                     Log.i(TAG, "lookup helper: ${o.optString("out")}")
                     failures = 0
+                    status = "켜짐"
                     started.complete(true)
                 } else {
                     pending.remove(id)?.complete(o)
@@ -122,7 +134,12 @@ object Lookups {
                     input = null
                 }
             }
-            if (!started.isDone) failures++
+            if (!started.isDone) {
+                failures++
+                status = "꺼짐 (시작 실패)"
+            } else {
+                status = "꺼짐"
+            }
             started.complete(false)
             // Everyone still waiting gets a "try the other way".
             val gone = Unavailable("lookup helper stopped")

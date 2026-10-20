@@ -63,6 +63,7 @@ import io.github.apostolichiro.videodl.engine.Fmt
 import io.github.apostolichiro.videodl.engine.Links
 import io.github.apostolichiro.videodl.engine.Quality
 import io.github.apostolichiro.videodl.engine.Sniff
+import io.github.apostolichiro.videodl.engine.Web
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -89,6 +90,10 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
     }
     val info = if (req.info != null) shared ?: InfoState.Loading else own ?: InfoState.Loading
     val preview = (info as? InfoState.Ready)?.preview
+    // An ordinary page whose video the browser already saw playing: that video can be downloaded right away,
+    // no need to wait for yt-dlp to read the page (sites it knows, like Instagram, still wait: their
+    // played streams are often picture-only pieces).
+    val streamNow = preview == null && req.found.isNotEmpty() && !Web.isVideoPage(req.url)
     val quick by produceState<QuickMeta.Meta?>(null, req.url) {
         value = withContext(Dispatchers.IO) { QuickMeta.fetch(req.url) }
     }
@@ -123,12 +128,13 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
         },
     ) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            Header(info, req, quick)
+            Header(info, req, quick, streamNow)
             Spacer(Modifier.height(18.dp))
 
             // What "최고 화질" comes to for this video, once the lookup knows.
             val best = preview?.choices?.get(Quality.BEST)
             val detail = when {
+                streamNow -> ""
                 info is InfoState.Loading -> "확인 중…"
                 best != null -> listOfNotNull(Estimate.resLabel(best.res), best.bytes?.let { "약 " + Fmt.size(it) }).joinToString(" · ")
                 else -> ""
@@ -164,6 +170,16 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                         when {
                             d != null && done -> close { d.files.firstOrNull()?.let { f -> app.play(d, f) } }
                             d != null -> close { Store.tab.value = Store.TAB_PROGRESS }
+                            streamNow -> {
+                                val name = quick?.title ?: req.pageTitle
+                                start(
+                                    NewJob(
+                                        url = req.found.first(), quality = quality, origin = Origin.STREAM, referer = req.url,
+                                        pageTitle = name, userAgent = req.userAgent, fallbacks = req.found.drop(1),
+                                        title = name, thumbnail = req.pageImage ?: quick?.image,
+                                    ),
+                                )
+                            }
                             else -> start(
                                 NewJob(
                                     url = req.url, quality = quality, origin = req.origin, referer = req.referer, pageTitle = req.pageTitle,
@@ -186,7 +202,7 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
 }
 
 @Composable
-private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?) {
+private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?, streamNow: Boolean) {
     val colors = MaterialTheme.colorScheme
     val p = (info as? InfoState.Ready)?.preview
     // While yt-dlp is still looking, the page's own title and picture stand in.
@@ -198,7 +214,9 @@ private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?) {
         Column(Modifier.weight(1f).heightIn(min = 72.dp), verticalArrangement = Arrangement.Center) {
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             when (info) {
-                InfoState.Loading -> Row(Modifier.padding(top = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                InfoState.Loading -> if (streamNow) {
+                    Text("페이지에서 재생된 영상을 바로 받을 수 있어요", style = MaterialTheme.typography.bodySmall, color = colors.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
+                } else Row(Modifier.padding(top = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = colors.primary)
                     Spacer(Modifier.width(6.dp))
                     Text("용량 확인 중 · 기다리지 않고 받아도 돼요", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)

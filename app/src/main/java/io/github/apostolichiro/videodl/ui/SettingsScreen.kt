@@ -43,6 +43,7 @@ import io.github.apostolichiro.videodl.Store
 import io.github.apostolichiro.videodl.Tabs
 import io.github.apostolichiro.videodl.UpdateState
 import io.github.apostolichiro.videodl.engine.Engine
+import io.github.apostolichiro.videodl.engine.Lookups
 import io.github.apostolichiro.videodl.engine.SearchEngine
 
 @Composable
@@ -117,6 +118,12 @@ fun SettingsScreen(app: AppActions, tabs: Tabs) {
                 }
             }
             Item("다운로드 엔진", "$line · 눌러서 업데이트") { app.updateEngine() }
+        }
+        item {
+            // How fast looking a video up is right now (to tell what's slow when it is).
+            val status = Lookups.status
+            val last = Engine.lastLookup
+            Item("영상 정보 확인", "빠른 확인 $status" + (last?.let { " · 마지막 확인 $it" } ?: "")) {}
         }
     }
 

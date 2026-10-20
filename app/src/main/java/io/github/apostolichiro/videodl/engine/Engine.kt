@@ -26,6 +26,9 @@ object Engine {
     private val updateLock = Any()
     @Volatile private var inited = false
 
+    /** How long the last lookup took and which way it went, for the settings screen. */
+    @Volatile var lastLookup: String? = null
+
     /** Unpacks Python and ffmpeg on first run (a few seconds, once per app version). */
     fun init(ctx: Context) {
         synchronized(initLock) {
@@ -197,15 +200,24 @@ object Engine {
         cookies?.let { args += listOf("--cookies", it.absolutePath) }
         referer?.let { args += listOf("--referer", it) }
         userAgent?.let { args += listOf("--user-agent", it) }
+        // A lookup shouldn't hang on a slow site: give up on a dead connection sooner and don't retry.
+        args += listOf("--socket-timeout", "12", "--extractor-retries", "1")
+        val t0 = System.currentTimeMillis()
+        var via = "빠른 확인"
         val out = try {
-            // The yt-dlp that is already running answers in a fraction of the time.
-            Lookups.json(ctx, url, args)
-        } catch (e: Lookups.Unavailable) {
-            Log.w(TAG, "lookup helper unavailable (${e.message}), starting yt-dlp for this one")
-            val req = YoutubeDLRequest(url)
-            // -J prints everything yt-dlp knows as JSON.
-            req.addCommands(args + "-J")
-            YoutubeDL.getInstance().execute(req, pid).out
+            try {
+                // The yt-dlp that is already running answers in a fraction of the time.
+                Lookups.json(ctx, url, args)
+            } catch (e: Lookups.Unavailable) {
+                Log.w(TAG, "lookup helper unavailable (${e.message}), starting yt-dlp for this one")
+                via = "일반"
+                val req = YoutubeDLRequest(url)
+                // -J prints everything yt-dlp knows as JSON.
+                req.addCommands(args + "-J")
+                YoutubeDL.getInstance().execute(req, pid).out
+            }
+        } finally {
+            lastLookup = "%.1f초 (%s)".format((System.currentTimeMillis() - t0) / 1000.0, via)
         }
         val json = JSONObject(out)
         saveTo?.let { f ->
