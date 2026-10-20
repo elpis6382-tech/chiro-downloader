@@ -89,10 +89,11 @@ fun AppRoot(app: AppActions, tabs: Tabs) {
     val sheet by Store.sheet.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val running = jobs.count { it.status.active || it.status == Status.QUEUED }
-    // A web page gets the whole screen (sites like Instagram size their videos to the screen's height):
-    // the bar below only shows on the home page and the other tabs.
+    // On a web page the bar below steps aside while the page is scrolled down (sites like Instagram size
+    // their videos to the screen's height) and is back as soon as it's scrolled up.
     val browserTab by tabs.current.collectAsStateWithLifecycle()
     val pageUrl by browserTab.url.collectAsStateWithLifecycle()
+    val barHidden by tabs.barHidden.collectAsStateWithLifecycle()
     val onWebPage = tab == Store.TAB_HOME && pageUrl.isNotEmpty()
 
     LaunchedEffect(notice) {
@@ -105,7 +106,7 @@ fun AppRoot(app: AppActions, tabs: Tabs) {
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (!onWebPage) BottomBar(tab, running) { Store.tab.value = it }
+            if (!(onWebPage && barHidden)) BottomBar(tab, running) { Store.tab.value = it }
         },
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {

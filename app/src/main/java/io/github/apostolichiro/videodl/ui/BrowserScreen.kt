@@ -251,8 +251,6 @@ private fun AddressBar(tab: WebTab, tabs: Tabs, app: AppActions, onTabs: () -> U
             }
         }
         Spacer(Modifier.width(4.dp))
-        // On web pages the bar below is hidden: downloads are one tap away here.
-        if (!home) DownloadsChip()
         TabCount(count.size, onTabs)
         Box {
             RoundIcon(Icons.Rounded.MoreVert, "메뉴", { menu = true })
@@ -264,8 +262,6 @@ private fun AddressBar(tab: WebTab, tabs: Tabs, app: AppActions, onTabs: () -> U
                     DropdownMenuItem(text = { Text("링크 공유") }, onClick = { menu = false; app.shareText(url) })
                     DropdownMenuItem(text = { Text("다른 브라우저로 열기") }, onClick = { menu = false; app.openExternal(url) })
                     DropdownMenuItem(text = { Text("홈으로") }, onClick = { menu = false; tab.showHome() })
-                    DropdownMenuItem(text = { Text("받는 중") }, onClick = { menu = false; Store.tab.value = Store.TAB_PROGRESS })
-                    DropdownMenuItem(text = { Text("파일") }, onClick = { menu = false; Store.tab.value = Store.TAB_FILES })
                 }
                 var ads by remember { mutableStateOf(Store.adBlock) }
                 DropdownMenuItem(
@@ -290,29 +286,6 @@ private fun AddressBar(tab: WebTab, tabs: Tabs, app: AppActions, onTabs: () -> U
             Store.setShortcuts(Store.shortcuts.value + s)
             Store.notice.value = "홈 화면에 추가했어요."
             addShortcut = false
-        }
-    }
-}
-
-/** Next to the address: the downloads (with how many are going), for when the bar below is hidden. */
-@Composable
-private fun DownloadsChip() {
-    val colors = MaterialTheme.colorScheme
-    val jobs by Store.jobs.collectAsStateWithLifecycle()
-    val running = jobs.count { it.status.active || it.status == Status.QUEUED }
-    Box(
-        Modifier.size(40.dp).clip(CircleShape).clickable { Store.tab.value = if (running > 0) Store.TAB_PROGRESS else Store.TAB_FILES }
-            .semantics { contentDescription = if (running > 0) "받는 중 ${running}개" else "파일" },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(if (running > 0) AppIcons.Downloading else AppIcons.Folder, null, tint = colors.onSurfaceVariant, modifier = Modifier.size(22.dp))
-        if (running > 0) {
-            Box(
-                Modifier.align(Alignment.TopEnd).offset(x = (-3).dp, y = 3.dp).size(16.dp).clip(CircleShape).background(LocalAccents.current.badge),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(if (running > 9) "9+" else "$running", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-            }
         }
     }
 }

@@ -114,6 +114,7 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
         pending = null
         url.value = ""
         title.value = ""
+        owner.barHidden.value = false
         progress.value = 100
         found.value = emptyList()
         info.value = null
@@ -136,6 +137,7 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
         // Another page (also when a site changes pages without reloading): the videos seen so far were the old page's.
         if (lookedUp != null) found.value = emptyList()
         lookedUp = key
+        if (owner.current.value === this) owner.barHidden.value = false
         lookup?.cancel()
         info.value = null
         postLookup?.cancel()
@@ -206,6 +208,11 @@ class Tabs(
     private var nextId = 1L
     val list = MutableStateFlow<List<WebTab>>(emptyList())
     val current: MutableStateFlow<WebTab>
+    /**
+     * The bar below steps aside while a page is scrolled down (the page gets the whole height, which sites
+     * like Instagram size their videos to) and comes back as soon as it is scrolled up, like Chrome's bars.
+     */
+    val barHidden = MutableStateFlow(false)
 
     init {
         val saved = Store.savedTabs.take(20)
@@ -229,6 +236,7 @@ class Tabs(
             old.view?.let { pause(it) }
         }
         current.value = t
+        barHidden.value = false
         t.view?.onResume()
     }
 
@@ -322,6 +330,32 @@ class Tabs(
         settings.userAgentString = settings.userAgentString.replace("; wv", "")
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+        // Which way the finger drags (pages often scroll inside their own boxes, so the WebView's own scroll
+        // position can't tell): up hides the bar below, down brings it back. The touch still goes to the page.
+        val step = 28 * resources.displayMetrics.density
+        var lastY = 0f
+        var startX = 0f
+        var startY = 0f
+        @SuppressLint("ClickableViewAccessibility")
+        setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    startX = e.x; startY = e.y; lastY = e.y
+                }
+                android.view.MotionEvent.ACTION_MOVE -> if (e.pointerCount == 1) {
+                    val dy = e.y - lastY
+                    val sideways = kotlin.math.abs(e.x - startX) > kotlin.math.abs(e.y - startY)
+                    if (!sideways && kotlin.math.abs(dy) > step) {
+                        barHidden.value = dy < 0
+                        lastY = e.y
+                    } else if (sideways) {
+                        lastY = e.y
+                    }
+                }
+            }
+            false
+        }
 
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
