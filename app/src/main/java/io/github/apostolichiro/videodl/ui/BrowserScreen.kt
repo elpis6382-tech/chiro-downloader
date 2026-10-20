@@ -484,7 +484,7 @@ private fun HowTo() {
         Text("이렇게 받아요", style = MaterialTheme.typography.titleSmall, color = colors.onSurfaceVariant)
         listOf(
             "사이트에서 영상을 열면 오른쪽 아래 파란 버튼이 켜져요. 누르고 화질을 고르면 끝.",
-            "유튜브·인스타 같은 앱에서는 [공유] → 영상 다운로더를 고르면 앱을 안 열고 받아요.",
+            "인스타·틱톡 같은 앱에서는 [공유] → 영상 다운로더를 고르면 앱을 안 열고 받아요.",
             "링크를 복사해 두면 여기 홈에 [받기]가 떠요.",
         ).forEach { line ->
             Row(verticalAlignment = Alignment.Top) {

@@ -46,9 +46,6 @@ data class NewJob(
     val thumbnail: String? = null,
 )
 
-/** The same video was downloaded before: show it, or download again? */
-data class DupAsk(val existing: Job, val pending: NewJob)
-
 data class Job(
     val id: String,
     val url: String,
@@ -134,9 +131,6 @@ object Store {
     /** A newer version of the app itself. */
     val update = MutableStateFlow<UpdateState>(UpdateState.None)
 
-    /** "You already downloaded this" question waiting for an answer. */
-    val dupAsk = MutableStateFlow<DupAsk?>(null)
-
     /** The download sheet, when open. */
     val sheet = MutableStateFlow<SheetRequest?>(null)
 
@@ -154,6 +148,12 @@ object Store {
         historyFile = File(ctx.filesDir, "history.json")
         _jobs.value = load()
         shortcuts.value = loadShortcuts()
+        // YouTube left the home page (version 1.1.9); someone who kept the old list loses only that one, once.
+        if (!prefs.getBoolean("droppedYouTube", false)) {
+            prefs.edit().putBoolean("droppedYouTube", true).apply()
+            val list = shortcuts.value
+            if (list.any { it.url == "https://m.youtube.com" }) setShortcuts(list.filterNot { it.url == "https://m.youtube.com" })
+        }
     }
 
     var quality: Quality

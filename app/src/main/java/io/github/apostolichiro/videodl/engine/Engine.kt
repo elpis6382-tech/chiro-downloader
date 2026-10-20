@@ -191,20 +191,26 @@ object Engine {
         quickYouTube: Boolean = false, saveTo: File? = null,
     ): Preview {
         init(ctx)
-        val req = YoutubeDLRequest(url)
-        req.addOption("--cache-dir", File(ctx.filesDir, "yt-dlp-cache").absolutePath)
-        // -J prints everything yt-dlp knows as JSON; a playlist only lists its videos instead of opening each.
-        val args = (baseArgs(ctx) + listOf("-J", "--flat-playlist")).toMutableList()
+        // A playlist only lists its videos instead of opening each.
+        val args = (baseArgs(ctx) + listOf("--flat-playlist", "--cache-dir", File(ctx.filesDir, "yt-dlp-cache").absolutePath)).toMutableList()
         if (quickYouTube) args += listOf("--extractor-args", "youtube:player_client=visionos")
         cookies?.let { args += listOf("--cookies", it.absolutePath) }
         referer?.let { args += listOf("--referer", it) }
         userAgent?.let { args += listOf("--user-agent", it) }
-        req.addCommands(args)
-        val res = YoutubeDL.getInstance().execute(req, pid)
-        val json = JSONObject(res.out)
+        val out = try {
+            // The yt-dlp that is already running answers in a fraction of the time.
+            Lookups.json(ctx, url, args)
+        } catch (e: Lookups.Unavailable) {
+            Log.w(TAG, "lookup helper unavailable (${e.message}), starting yt-dlp for this one")
+            val req = YoutubeDLRequest(url)
+            // -J prints everything yt-dlp knows as JSON.
+            req.addCommands(args + "-J")
+            YoutubeDL.getInstance().execute(req, pid).out
+        }
+        val json = JSONObject(out)
         saveTo?.let { f ->
             f.parentFile?.mkdirs()
-            f.writeText(res.out)
+            f.writeText(out)
         }
         return parsePreview(url, json)
     }

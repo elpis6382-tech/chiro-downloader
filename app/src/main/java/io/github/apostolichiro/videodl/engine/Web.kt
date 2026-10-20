@@ -20,7 +20,6 @@ data class Shortcut(val name: String, val url: String)
 /** Browser helpers that don't need Android, so they can be unit-tested. */
 object Web {
     val defaultShortcuts = listOf(
-        Shortcut("유튜브", "https://m.youtube.com"),
         Shortcut("인스타그램", "https://www.instagram.com"),
         Shortcut("틱톡", "https://www.tiktok.com"),
         Shortcut("X", "https://x.com"),

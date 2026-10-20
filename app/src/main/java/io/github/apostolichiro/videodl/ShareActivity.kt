@@ -43,8 +43,8 @@ class ShareActivity : ComponentActivity() {
             return
         }
         val quality = Store.quality
-        Downloads.alreadyHave(this, url, quality)?.let {
-            toast("이미 받은 영상이에요: ${Texts.title(it)}")
+        Downloads.duplicateOf(this, url, quality)?.let {
+            toast(Downloads.duplicateNotice(it))
             return
         }
         Downloads.start(this, NewJob(url, quality))

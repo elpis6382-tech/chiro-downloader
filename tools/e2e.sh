@@ -34,7 +34,7 @@ browse() {
 }
 # Closes the download sheet if one is still open (it covers everything else).
 nosheet() {
-  if python3 tools/ui.py wait "다운로드||그래도 다운로드" 1 --exact >/dev/null 2>&1; then
+  if python3 tools/ui.py wait "다운로드||받은 영상 보기||받는 중 보기" 1 --exact >/dev/null 2>&1; then
     adb shell input keyevent KEYCODE_BACK
     sleep 1
   fi
@@ -92,6 +92,7 @@ crashed "sheet"
 ui tap "이 페이지 영상 받기" >/dev/null
 ui tap "소리만" --exact >/dev/null
 ui wait "이미 받은 영상이에요" 20 >/dev/null && log "already-downloaded note: ok" || log "already-downloaded note: FAILED"
+ui wait "받은 영상 보기" 5 --exact >/dev/null && log "sheet offers the existing video, not a second download: ok" || log "sheet offers the existing video: FAILED"
 shot 06_sheet_dup
 adb shell input keyevent KEYCODE_BACK
 sleep 1
@@ -122,6 +123,12 @@ ui tap "문서 다운로드" >/dev/null
 waitfile "notes" 60 && log "site file download: ok" || log "site file download: FAILED"
 
 nosheet
+# 4b) Sharing a video that was already downloaded doesn't download it again.
+before=$(count "테스트 영상")
+share "again http://10.0.2.2:8000/page.html"
+sleep 15
+[ "$(count "테스트 영상")" -eq "$before" ] && log "shared duplicate blocked: ok" || log "shared duplicate blocked: FAILED"
+
 # 5) Tabs: open a second one.
 ui tap "탭 1개" >/dev/null && sleep 2 && shot 10_tabs
 ui tap "새 탭" --exact >/dev/null

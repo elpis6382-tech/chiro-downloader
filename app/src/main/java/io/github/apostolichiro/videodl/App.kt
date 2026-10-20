@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.util.Log
 import io.github.apostolichiro.videodl.engine.Engine
+import io.github.apostolichiro.videodl.engine.Lookups
 
 class App : Application() {
     override fun onCreate() {
@@ -27,6 +28,8 @@ class App : Application() {
                 return
             }
             updateEngine(ctx, DAY)
+            // Keep a yt-dlp loaded for looking links up.
+            Lookups.warmUp(ctx)
             Updater.check(ctx, 3 * 60 * 60 * 1000L)
         }
 
@@ -42,6 +45,11 @@ class App : Application() {
                 false
             }
             Store.engine.value = EngineState.Ready(Store.engineVersion, Store.engineCheckedAt, failed)
+            // The running lookup helper still has the old yt-dlp loaded.
+            if (changed) {
+                Lookups.stop()
+                Lookups.warmUp(ctx)
+            }
             return changed
         }
     }

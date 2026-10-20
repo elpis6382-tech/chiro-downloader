@@ -143,11 +143,18 @@ class EngineTest {
     /** The link box preview reads the title without downloading. */
     @Test
     fun e2_previewReadsTheTitle() {
+        var t = System.currentTimeMillis()
         val p = Engine.info(ctx, "$host/page.html", "test-info")
-        log("preview: title=${p.title} choices=${p.choices}")
+        log("preview: title=${p.title} choices=${p.choices} (${System.currentTimeMillis() - t} ms)")
         assertTrue(p.title ?: "", p.title?.startsWith("테스트 영상") == true)
+        t = System.currentTimeMillis()
         val big = Engine.info(ctx, "$host/clip.mp4", "test-info-2")
+        log("second preview (helper warm): ${System.currentTimeMillis() - t} ms")
         assertEquals("clip", big.title)
+        // A bad link gives an error, not an empty answer.
+        val bad = runCatching { Engine.info(ctx, "$host/nothing-here.html", "test-info-bad") }
+        assertTrue("a missing page should fail", bad.isFailure)
+        log("bad link: ${bad.exceptionOrNull()?.message?.take(200)}")
     }
 
     /** A download from the sheet starts from the preview's lookup instead of reading the page again. */

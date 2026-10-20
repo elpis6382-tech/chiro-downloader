@@ -18,6 +18,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -93,10 +95,12 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
 
     var quality by remember { mutableStateOf(Store.quality) }
     val jobs by Store.jobs.collectAsStateWithLifecycle()
-    val doneCount = jobs.count { it.status == Status.DONE }
-    val already by produceState<Job?>(null, req.url, quality, doneCount) {
-        value = withContext(Dispatchers.IO) { Downloads.alreadyHave(ctx, req.url, quality) }
+    val jobsKey = jobs.map { it.id to it.status }.hashCode()
+    // The same video is never downloaded twice: finished (and still on the phone), or still going.
+    val dup by produceState<Job?>(null, req.url, quality, jobsKey) {
+        value = withContext(Dispatchers.IO) { Downloads.duplicateOf(ctx, req.url, quality, req.origin, req.referer) }
     }
+    val done = dup?.status == Status.DONE
 
     fun close(after: () -> Unit = {}) {
         scope.launch { state.hide() }.invokeOnCompletion {
@@ -134,41 +138,43 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                 }
             }
 
-            already?.let { a ->
-                Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "이미 받은 영상이에요", style = MaterialTheme.typography.bodySmall, color = colors.tertiary,
-                        fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = { close { a.files.firstOrNull()?.let { f -> app.play(a, f) } } }) { Text("보기") }
-                }
+            dup?.let {
+                Text(
+                    if (done) "이미 받은 영상이에요" else "지금 받고 있어요",
+                    style = MaterialTheme.typography.bodySmall, color = colors.tertiary, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 12.dp, start = 4.dp),
+                )
             }
 
             Spacer(Modifier.height(14.dp))
+            val label = when {
+                dup != null && done -> "받은 영상 보기"
+                dup != null -> "받는 중 보기"
+                preview?.isPlaylist == true -> "${preview.playlistCount}개 모두 다운로드"
+                else -> "다운로드"
+            }
             Box(
                 Modifier.fillMaxWidth().height(54.dp).clip(RoundedCornerShape(16.dp)).background(LocalAccents.current.fab)
                     .clickable {
-                        start(
-                            NewJob(
-                                url = req.url, quality = chosen, origin = req.origin, referer = req.referer, pageTitle = req.pageTitle,
-                                userAgent = req.userAgent, fallbacks = req.found, title = preview?.title, thumbnail = preview?.thumbnail,
-                            ),
-                        )
+                        val d = dup
+                        when {
+                            d != null && done -> close { d.files.firstOrNull()?.let { f -> app.play(d, f) } }
+                            d != null -> close { Store.tab.value = Store.TAB_PROGRESS }
+                            else -> start(
+                                NewJob(
+                                    url = req.url, quality = chosen, origin = req.origin, referer = req.referer, pageTitle = req.pageTitle,
+                                    userAgent = req.userAgent, fallbacks = req.found, title = preview?.title, thumbnail = preview?.thumbnail,
+                                ),
+                            )
+                        }
                     }
-                    .semantics { contentDescription = "다운로드" },
+                    .semantics { contentDescription = if (dup == null) "다운로드" else label },
                 contentAlignment = Alignment.Center,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(AppIcons.Download, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                    Icon(if (dup != null) Icons.Rounded.PlayArrow else AppIcons.Download, null, tint = Color.White, modifier = Modifier.size(22.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(
-                        when {
-                            already != null -> "그래도 다운로드"
-                            preview?.isPlaylist == true -> "${preview.playlistCount}개 모두 다운로드"
-                            else -> "다운로드"
-                        },
-                        color = Color.White, style = MaterialTheme.typography.titleMedium,
-                    )
+                    Text(label, color = Color.White, style = MaterialTheme.typography.titleMedium)
                 }
             }
 

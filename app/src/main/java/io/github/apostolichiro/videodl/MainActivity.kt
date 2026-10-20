@@ -187,7 +187,7 @@ class MainActivity : ComponentActivity(), FullscreenHost {
             if (stamp == Store.clipSeenAt) return
             Store.clipSeenAt = stamp
             val link = Links.extract(readClipboard()) ?: return
-            if (Downloads.alreadyHave(this, link, Store.quality) == null) {
+            if (Downloads.duplicateOf(this, link, Store.quality) == null) {
                 Store.clipLink.value = link
                 // Look it up right away, so the sheet is ready by the time [받기] is pressed.
                 lifecycleScope.launch {
@@ -219,10 +219,6 @@ class MainActivity : ComponentActivity(), FullscreenHost {
             return
         }
         Store.tab.value = Store.TAB_PROGRESS
-        Downloads.alreadyHave(this, url, Store.quality)?.let {
-            Store.dupAsk.value = DupAsk(it, NewJob(url, Store.quality))
-            return
-        }
         start(NewJob(url, Store.quality))
     }
 
@@ -235,7 +231,12 @@ class MainActivity : ComponentActivity(), FullscreenHost {
         }
     }
 
+    /** Every download the app starts comes through here; the same video is never downloaded twice. */
     private fun start(n: NewJob) {
+        Downloads.duplicateOf(this, n)?.let {
+            Store.notice.value = Downloads.duplicateNotice(it)
+            return
+        }
         askNotificationsOnce()
         Downloads.start(this, n)
         Store.notice.value = "다운로드를 시작했어요. [받는 중]에서 볼 수 있어요."

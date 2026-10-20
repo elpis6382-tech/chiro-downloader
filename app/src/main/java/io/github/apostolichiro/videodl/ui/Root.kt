@@ -86,7 +86,6 @@ fun AppRoot(app: AppActions, tabs: Tabs) {
     val tab by Store.tab.collectAsStateWithLifecycle()
     val jobs by Store.jobs.collectAsStateWithLifecycle()
     val notice by Store.notice.collectAsStateWithLifecycle()
-    val dup by Store.dupAsk.collectAsStateWithLifecycle()
     val sheet by Store.sheet.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val running = jobs.count { it.status.active || it.status == Status.QUEUED }
@@ -115,26 +114,6 @@ fun AppRoot(app: AppActions, tabs: Tabs) {
     }
 
     sheet?.let { r -> key(r) { DownloadSheet(r, app) } }
-
-    dup?.let { d ->
-        AlertDialog(
-            onDismissRequest = { Store.dupAsk.value = null },
-            title = { Text("이미 받은 영상이에요") },
-            text = { Text(Texts.title(d.existing)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    Store.dupAsk.value = null
-                    app.download(d.pending)
-                }) { Text("그래도 받기") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    Store.dupAsk.value = null
-                    d.existing.files.firstOrNull()?.let { app.play(d.existing, it) }
-                }) { Text("보기") }
-            },
-        )
-    }
 }
 
 @Composable
