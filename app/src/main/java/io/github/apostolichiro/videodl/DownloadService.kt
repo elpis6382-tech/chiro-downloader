@@ -207,11 +207,21 @@ class DownloadService : Service() {
                 return
             }
 
+            // A file called .mp4 that isn't really one (a stream's raw pieces, or pieces disguised as pictures)
+            // won't play in most players: repackage it into a real MP4 first.
+            val files = outcome.files.map { f ->
+                if (!Engine.needsRepair(f)) f else {
+                    Store.update(id) { it.copy(status = Status.PROCESSING, step = "Repair", progress = null, speed = null, etaSec = null) }
+                    notifyProgress(force = true)
+                    Engine.repairToMp4(this, f) ?: f
+                }
+            }
+
             Store.update(id) { it.copy(status = Status.SAVING, progress = null, speed = null, etaSec = null) }
             notifyProgress(force = true)
             val saved = mutableListOf<SavedFile>()
             var saveError: String? = null
-            for (f in outcome.files) {
+            for (f in files) {
                 try {
                     saved += Saver.save(this, f)
                 } catch (e: Exception) {

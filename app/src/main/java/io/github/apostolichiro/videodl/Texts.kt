@@ -35,6 +35,7 @@ object Texts {
             "Merger" -> "영상과 소리를 합치는 중…"
             "ExtractAudio" -> "소리만 뽑는 중…"
             "VideoRemuxer", "VideoConvertor" -> "MP4로 바꾸는 중…"
+            "Repair" -> "재생되게 MP4로 고치는 중…"
             else -> if (job.step?.startsWith("Fixup") == true) "MP4로 정리하는 중…" else "마무리하는 중…"
         }
         Status.SAVING -> "저장하는 중…"

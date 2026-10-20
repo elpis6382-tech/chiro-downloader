@@ -253,6 +253,61 @@ object Engine {
             .replace(Regex("\\s+"), " ").trim().take(80).trim().ifEmpty { "video" }
             .replace("%", "%%")
 
+    /** A video file whose content isn't the MP4/WebM its name says (checked from the first bytes). */
+    fun needsRepair(f: File): Boolean {
+        val ext = f.extension.lowercase()
+        if (ext != "mp4" && ext != "m4v" && ext != "mov") return false
+        val head = ByteArray(12)
+        val n = try {
+            f.inputStream().use { it.read(head) }
+        } catch (_: Exception) {
+            return false
+        }
+        if (n < 12) return false
+        val ftyp = head[4] == 'f'.code.toByte() && head[5] == 't'.code.toByte() && head[6] == 'y'.code.toByte() && head[7] == 'p'.code.toByte()
+        val moovFirst = String(head, 4, 4, Charsets.ISO_8859_1) in setOf("moov", "mdat", "free", "wide", "skip")
+        return !ftyp && !moovFirst
+    }
+
+    /**
+     * Repackages [f] into a real MP4 with ffmpeg (no re-encoding). The input is read as MPEG-TS, which also
+     * gets past stream pieces disguised as pictures (ffmpeg skips to the video data). Returns the new file, or null.
+     */
+    fun repairToMp4(ctx: Context, f: File): File? {
+        init(ctx)
+        val out = File(f.parentFile, f.nameWithoutExtension + ".fixed.mp4")
+        out.delete()
+        val ffmpeg = File(ctx.applicationInfo.nativeLibraryDir, "libffmpeg.so")
+        if (!ffmpeg.isFile) return null
+        val base = File(ctx.noBackupFilesDir, YoutubeDL.baseName)
+        return try {
+            val pb = ProcessBuilder(
+                ffmpeg.absolutePath, "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "mpegts", "-i", f.absolutePath,
+                "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart", out.absolutePath,
+            ).redirectErrorStream(true)
+            pb.environment()["LD_LIBRARY_PATH"] =
+                "${base.absolutePath}/packages/ffmpeg/usr/lib:${base.absolutePath}/packages/python/usr/lib"
+            val p = pb.start()
+            val log = p.inputStream.bufferedReader().readText()
+            val code = p.waitFor()
+            if (code == 0 && out.length() > 1024 && !needsRepair(out)) {
+                // Keep the original name.
+                val final = File(f.parentFile, f.name)
+                f.delete()
+                if (out.renameTo(final)) final else out
+            } else {
+                Log.w(TAG, "repair failed ($code): ${log.takeLast(500)}")
+                out.delete()
+                null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "repair failed", e)
+            out.delete()
+            null
+        }
+    }
+
     fun cancel(id: String) {
         try {
             YoutubeDL.getInstance().destroyProcessById(id)

@@ -72,7 +72,11 @@ import kotlinx.coroutines.delay
 private enum class Swipe { BRIGHTNESS, VOLUME }
 
 @Composable
-fun PlayerScreen(player: ExoPlayer, window: Window, onBack: () -> Unit, onRotate: () -> Unit, onOpenWith: (Int) -> Unit) {
+fun PlayerScreen(
+    player: ExoPlayer, window: Window, onBack: () -> Unit, onRotate: () -> Unit, onOpenWith: (Int) -> Unit,
+    /** What the file at this index really is (from its first bytes), to explain a failure. */
+    describe: (Int) -> String = { "" },
+) {
     val ctx = LocalContext.current
     val audio = remember { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     var playing by remember { mutableStateOf(player.isPlaying) }
@@ -87,6 +91,7 @@ fun PlayerScreen(player: ExoPlayer, window: Window, onBack: () -> Unit, onRotate
     var touched by remember { mutableIntStateOf(0) }
     var speed by remember { mutableFloatStateOf(1f) }
     var error by remember { mutableStateOf<String?>(null) }
+    var errorDetail by remember { mutableStateOf<String?>(null) }
     var indicator by remember { mutableStateOf<Pair<ImageVector?, String>?>(null) }
     var level by remember { mutableFloatStateOf(0f) }
     val count = player.mediaItemCount
@@ -113,6 +118,7 @@ fun PlayerScreen(player: ExoPlayer, window: Window, onBack: () -> Unit, onRotate
                 title = mediaItem?.mediaMetadata?.title?.toString() ?: title
                 aspect = 0f
                 error = null
+                errorDetail = null
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -125,6 +131,8 @@ fun PlayerScreen(player: ExoPlayer, window: Window, onBack: () -> Unit, onRotate
 
             override fun onPlayerError(e: PlaybackException) {
                 error = "이 파일은 여기서 재생할 수 없어요."
+                val i = player.currentMediaItemIndex
+                errorDetail = "원인: ${e.errorCodeName.removePrefix("ERROR_CODE_")} · 파일: ${describe(i)}"
                 controls = true
             }
         }
@@ -275,6 +283,9 @@ fun PlayerScreen(player: ExoPlayer, window: Window, onBack: () -> Unit, onRotate
                 error?.let { e ->
                     Column(Modifier.align(Alignment.Center).padding(top = 150.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(e, color = Color.White, fontSize = 14.sp)
+                        errorDetail?.let { d ->
+                            Text(d, color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp, start = 24.dp, end = 24.dp))
+                        }
                         TextButton(onClick = { onOpenWith(index) }) { Text("다른 앱으로 열기", color = Color.White) }
                     }
                 }

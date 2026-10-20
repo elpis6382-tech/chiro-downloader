@@ -65,8 +65,35 @@ class PlayerActivity : ComponentActivity() {
                     onBack = { finish() },
                     onRotate = ::rotate,
                     onOpenWith = { i -> openWith(items[i]) },
+                    describe = { i -> describe(items.getOrNull(i)) },
                 )
             }
+        }
+    }
+
+    /** The file's real type from its first bytes, and its size ("MPEG-TS · 12.3MB"). */
+    private fun describe(f: SavedFile?): String {
+        f ?: return "없음"
+        return try {
+            val uri = Uri.parse(f.uri)
+            val size = contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1
+            val head = ByteArray(16)
+            val n = contentResolver.openInputStream(uri)?.use { it.read(head) } ?: -1
+            fun at(i: Int, vararg b: Int) = n >= i + b.size && b.indices.all { head[i + it].toInt() and 0xff == b[it] }
+            val kind = when {
+                n <= 0 -> "비어 있음"
+                at(4, 0x66, 0x74, 0x79, 0x70) -> "MP4"
+                at(0, 0x47) -> "MPEG-TS"
+                at(0, 0x1A, 0x45, 0xDF, 0xA3) -> "WebM/MKV"
+                at(0, 0x89, 0x50, 0x4E, 0x47) -> "PNG 그림"
+                at(0, 0xFF, 0xD8) -> "JPEG 그림"
+                at(0, 0x23, 0x45, 0x58, 0x54) -> "재생목록(m3u8)"
+                at(0, 0x3C) -> "웹페이지/텍스트"
+                else -> head.take(n.coerceAtMost(8)).joinToString(" ") { "%02X".format(it) }
+            }
+            kind + " · " + if (size >= 0) io.github.apostolichiro.videodl.engine.Fmt.size(size) else "크기 모름"
+        } catch (e: Exception) {
+            "열 수 없음 (${e.javaClass.simpleName})"
         }
     }
 
