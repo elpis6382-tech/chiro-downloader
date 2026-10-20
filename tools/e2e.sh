@@ -64,10 +64,10 @@ adb shell cmd statusbar collapse
 waitfile "테스트 영상" 240 "$before" && log "share page: ok" || log "share page: FAILED"
 crashed "share"
 
-# 2) Browser: open a direct video link, press the blue button, pick 소리만 in the sheet.
+# 2) Browser: open a direct video link, press the blue button; the sheet always takes the best quality.
 ui tap "홈" --exact >/dev/null
 sleep 1
-browse "10.0.2.2:8000/clip.mp4"
+browse "10.0.2.2:8000/clip2.mp4"
 sleep 6
 if adb shell dumpsys input_method | grep -q "mInputShown=true"; then
   log "keyboard after opening page: STILL UP"
@@ -78,19 +78,17 @@ else
 fi
 shot 04_browser_clip
 ui tap "이 페이지 영상 받기" >/dev/null && log "download button: tapped" || log "download button: FAILED"
-ui wait "clip" 40 --exact >/dev/null && log "sheet preview: ok" || log "sheet preview: FAILED"
+ui wait "clip2" 40 --exact >/dev/null && log "sheet preview: ok" || log "sheet preview: FAILED"
+ui wait "최고 화질로 받아요" 5 >/dev/null && log "always best quality: ok" || log "always best quality: FAILED"
+python3 tools/ui.py wait "페이지가 재생한 영상" 1 >/dev/null 2>&1 && log "streams hidden when the page works: FAILED" || log "streams hidden when the page works: ok"
 sleep 1
 shot 05_sheet
-ui tap "소리만" --exact >/dev/null
-sleep 1
-shot 05b_sheet_audio
 ui tap "다운로드" --exact >/dev/null
-waitfile "clip.m4a" 120 && log "sheet audio download: ok" || log "sheet audio download: FAILED"
+waitfile "clip2.mp4" 120 && log "sheet download: ok" || log "sheet download: FAILED"
 crashed "sheet"
 
-# 2b) The same video again: the sheet says it's already downloaded.
+# 2b) The same video again: the sheet offers the downloaded one instead of a second download.
 ui tap "이 페이지 영상 받기" >/dev/null
-ui tap "소리만" --exact >/dev/null
 ui wait "이미 받은 영상이에요" 20 >/dev/null && log "already-downloaded note: ok" || log "already-downloaded note: FAILED"
 ui wait "받은 영상 보기" 5 --exact >/dev/null && log "sheet offers the existing video, not a second download: ok" || log "sheet offers the existing video: FAILED"
 shot 06_sheet_dup
@@ -104,7 +102,7 @@ sleep 8
 shot 07_js_page
 ui wait "js.html" 5 >/dev/null && log "address replaced on typing: ok" || log "address replaced on typing: FAILED"
 ui tap "이 페이지 영상 받기" >/dev/null
-ui wait "스트리밍 영상 1||영상 파일 1" 40 >/dev/null && log "page streams listed: ok" || log "page streams listed: FAILED"
+ui wait "스트리밍 영상 1||영상 파일 1" 60 >/dev/null && log "page streams listed (page itself gave nothing): ok" || log "page streams listed: FAILED"
 sleep 2
 shot 08_js_sheet
 ui tap "받기" --exact >/dev/null && log "stream button: tapped" || log "stream button: FAILED"

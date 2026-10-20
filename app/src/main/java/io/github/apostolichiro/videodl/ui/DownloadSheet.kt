@@ -93,7 +93,8 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
         value = withContext(Dispatchers.IO) { QuickMeta.fetch(req.url) }
     }
 
-    var quality by remember { mutableStateOf(Store.quality) }
+    // Always the best there is.
+    val quality = Quality.BEST
     val jobs by Store.jobs.collectAsStateWithLifecycle()
     val jobsKey = jobs.map { it.id to it.status }.hashCode()
     // The same video is never downloaded twice: finished (and still on the phone), or still going.
@@ -109,7 +110,6 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
         }
     }
 
-    // The choice here is for this download only; the default (also used for shared links) is in 설정.
     fun start(n: NewJob) {
         close { app.download(n) }
     }
@@ -126,16 +126,20 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
             Header(info, req, quick)
             Spacer(Modifier.height(18.dp))
 
-            val shown = Quality.entries.filter { preview == null || preview.isPlaylist || preview.shows(it) }
-            // A hidden quality gives the same file as "최고 화질", so that one shows as chosen.
-            val chosen = if (preview != null && !preview.isPlaylist && !preview.shows(quality)) Quality.BEST else quality
-            Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).border(1.dp, colors.outlineVariant, RoundedCornerShape(16.dp)),
+            // What "최고 화질" comes to for this video, once the lookup knows.
+            val best = preview?.choices?.get(Quality.BEST)
+            val detail = when {
+                info is InfoState.Loading -> "확인 중…"
+                best != null -> listOfNotNull(Estimate.resLabel(best.res), best.bytes?.let { "약 " + Fmt.size(it) }).joinToString(" · ")
+                else -> ""
+            }
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).border(1.dp, colors.outlineVariant, RoundedCornerShape(16.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                shown.forEachIndexed { i, q ->
-                    if (i > 0) HorizontalDivider(color = colors.outlineVariant, thickness = 1.dp, modifier = Modifier.padding(start = 52.dp))
-                    QualityRow(q, preview, selected = q == chosen) { quality = q }
-                }
+                Text("최고 화질로 받아요", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             }
 
             dup?.let {
@@ -162,7 +166,7 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                             d != null -> close { Store.tab.value = Store.TAB_PROGRESS }
                             else -> start(
                                 NewJob(
-                                    url = req.url, quality = chosen, origin = req.origin, referer = req.referer, pageTitle = req.pageTitle,
+                                    url = req.url, quality = quality, origin = req.origin, referer = req.referer, pageTitle = req.pageTitle,
                                     userAgent = req.userAgent, fallbacks = req.found, title = preview?.title, thumbnail = preview?.thumbnail,
                                 ),
                             )
@@ -178,10 +182,15 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                 }
             }
 
-            if (req.found.isNotEmpty()) {
+            // Only needed when the page address itself gave no video: then the streams the page played are the way in.
+            if (req.found.isNotEmpty() && info is InfoState.Failed) {
                 Text(
-                    "이 페이지에서 재생된 영상", style = MaterialTheme.typography.titleSmall, color = colors.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 24.dp, bottom = 4.dp),
+                    "페이지가 재생한 영상", style = MaterialTheme.typography.titleSmall, color = colors.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 24.dp),
+                )
+                Text(
+                    "주소로는 영상을 못 찾아서, 이 페이지가 실제로 재생한 영상을 보여줘요. 같은 영상이 화질별로 여러 개 보일 수 있어요.",
+                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
                 )
                 req.found.take(6).forEachIndexed { i, stream ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -202,7 +211,7 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                         TextButton(onClick = {
                             start(
                                 NewJob(
-                                    url = stream, quality = chosen, origin = Origin.STREAM, referer = req.referer ?: req.url,
+                                    url = stream, quality = quality, origin = Origin.STREAM, referer = req.referer ?: req.url,
                                     pageTitle = req.pageTitle ?: preview?.title, userAgent = req.userAgent,
                                     title = req.pageTitle ?: preview?.title, thumbnail = preview?.thumbnail,
                                 ),
@@ -251,36 +260,5 @@ private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun QualityRow(q: Quality, preview: io.github.apostolichiro.videodl.engine.Preview?, selected: Boolean, onClick: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    val c = preview?.choices?.get(q)
-    val label = when (q) {
-        Quality.BEST -> "최고 화질"
-        Quality.AUDIO -> "소리만 (M4A)"
-        else -> q.label
-    }
-    val detail = listOfNotNull(
-        if (q == Quality.BEST) Estimate.resLabel(c?.res) else null,
-        c?.bytes?.let { "약 " + Fmt.size(it) },
-    ).joinToString(" · ")
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 13.dp)
-            .semantics(mergeDescendants = true) { contentDescription = q.label },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier.size(22.dp).clip(CircleShape)
-                .border(2.dp, if (selected) colors.primary else colors.outline, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (selected) Box(Modifier.size(11.dp).clip(CircleShape).background(colors.primary))
-        }
-        Spacer(Modifier.width(14.dp))
-        Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.weight(1f))
-        if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     }
 }

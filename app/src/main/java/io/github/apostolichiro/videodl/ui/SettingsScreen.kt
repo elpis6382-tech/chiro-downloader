@@ -43,7 +43,6 @@ import io.github.apostolichiro.videodl.Store
 import io.github.apostolichiro.videodl.Tabs
 import io.github.apostolichiro.videodl.UpdateState
 import io.github.apostolichiro.videodl.engine.Engine
-import io.github.apostolichiro.videodl.engine.Quality
 import io.github.apostolichiro.videodl.engine.SearchEngine
 
 @Composable
@@ -51,11 +50,9 @@ fun SettingsScreen(app: AppActions, tabs: Tabs) {
     val colors = MaterialTheme.colorScheme
     val update by Store.update.collectAsStateWithLifecycle()
     val engine by Store.engine.collectAsStateWithLifecycle()
-    var quality by remember { mutableStateOf(Store.quality) }
     var parallel by remember { mutableStateOf(Store.maxParallel) }
     var adBlock by remember { mutableStateOf(Store.adBlock) }
     var search by remember { mutableStateOf(Store.searchEngine) }
-    var pickQuality by remember { mutableStateOf(false) }
     var pickSearch by remember { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }
 
@@ -64,7 +61,6 @@ fun SettingsScreen(app: AppActions, tabs: Tabs) {
         if (update !is UpdateState.None) item { UpdateCard(update, app) }
 
         item { Section("다운로드") }
-        item { Item("기본 화질", quality.label + " · 공유로 받을 때와 화질 고르는 창의 처음 선택") { pickQuality = true } }
         item {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text("동시에 받기", style = MaterialTheme.typography.bodyLarge)
@@ -84,6 +80,7 @@ fun SettingsScreen(app: AppActions, tabs: Tabs) {
                 }
             }
         }
+        item { Item("화질", "항상 최고 화질") {} }
         item { Item("저장 위치", "Download › ${Saver.FOLDER}") {} }
 
         item { Section("브라우저") }
@@ -123,13 +120,6 @@ fun SettingsScreen(app: AppActions, tabs: Tabs) {
         }
     }
 
-    if (pickQuality) {
-        Choose("기본 화질", Quality.entries, quality, { it.label }, onDismiss = { pickQuality = false }) {
-            quality = it
-            Store.quality = it
-            pickQuality = false
-        }
-    }
     if (pickSearch) {
         Choose("검색 엔진", SearchEngine.entries, search, { it.label }, onDismiss = { pickSearch = false }) {
             search = it

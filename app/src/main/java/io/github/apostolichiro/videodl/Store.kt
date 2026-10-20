@@ -156,10 +156,6 @@ object Store {
         }
     }
 
-    var quality: Quality
-        get() = Quality.of(prefs.getString("quality", null))
-        set(v) = prefs.edit().putString("quality", v.name).apply()
-
     var engineVersion: String?
         get() = prefs.getString("engineVersion", null)
         set(v) = prefs.edit().putString("engineVersion", v).apply()

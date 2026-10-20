@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
 import io.github.apostolichiro.videodl.engine.Links
+import io.github.apostolichiro.videodl.engine.Quality
 
 /**
  * "Share → 영상 다운로더" from another app: starts the download without opening the app,
@@ -42,12 +43,12 @@ class ShareActivity : ComponentActivity() {
             )
             return
         }
-        val quality = Store.quality
+        val quality = Quality.BEST
         Downloads.duplicateOf(this, url, quality)?.let {
             toast(Downloads.duplicateNotice(it))
             return
         }
         Downloads.start(this, NewJob(url, quality))
-        toast("받기 시작했어요 · ${Links.host(url)} · ${quality.label}")
+        toast("받기 시작했어요 · ${Links.host(url)}")
     }
 }

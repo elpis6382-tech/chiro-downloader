@@ -187,7 +187,7 @@ class MainActivity : ComponentActivity(), FullscreenHost {
             if (stamp == Store.clipSeenAt) return
             Store.clipSeenAt = stamp
             val link = Links.extract(readClipboard()) ?: return
-            if (Downloads.duplicateOf(this, link, Store.quality) == null) {
+            if (Downloads.duplicateOf(this, link, Quality.BEST) == null) {
                 Store.clipLink.value = link
                 // Look it up right away, so the sheet is ready by the time [받기] is pressed.
                 lifecycleScope.launch {
@@ -219,7 +219,7 @@ class MainActivity : ComponentActivity(), FullscreenHost {
             return
         }
         Store.tab.value = Store.TAB_PROGRESS
-        start(NewJob(url, Store.quality))
+        start(NewJob(url, Quality.BEST))
     }
 
     private fun askNotificationsOnce() {

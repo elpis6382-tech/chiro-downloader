@@ -18,6 +18,8 @@ ffmpeg -v error -y \
   -c:v libx264 -preset veryfast -pix_fmt yuv420p -g 30 -c:a aac -b:a 96k -shortest \
   -movflags +faststart "$OUT/clip.mp4"
 
+# A second plain file for the browser test (clip.mp4 is used by the site's download button).
+cp "$OUT/clip.mp4" "$OUT/clip2.mp4"
 ffmpeg -v error -y -i "$OUT/clip.mp4" -c copy -f hls -hls_time 2 -hls_playlist_type vod \
   -hls_segment_filename "$OUT/hls/seg%03d.ts" "$OUT/hls/index.m3u8"
 
