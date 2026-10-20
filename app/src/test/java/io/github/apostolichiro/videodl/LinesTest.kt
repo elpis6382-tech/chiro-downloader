@@ -98,6 +98,7 @@ class LinesTest {
         assertTrue(Errors.korean("Unable to download webpage: HTTP Error 403: Forbidden").contains("403"))
         assertTrue(Errors.korean("Unable to download webpage: <urlopen error [Errno 7] No address associated with hostname>").contains("인터넷"))
         assertTrue(Errors.korean("[Instagram] x: Requested content is not available, rate-limit reached or login required").contains("로그인"))
+        assertTrue(Errors.korean("Postprocessing: WARNING: unable to obtain file audio codec with ffprobe").contains("소리가 없어서"))
     }
 
     @Test

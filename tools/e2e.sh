@@ -183,6 +183,7 @@ ui wait "최근 받은 영상" 10 >/dev/null && log "home recent: ok" || log "ho
 crashed "end"
 
 adb logcat -d -b crash > shots/crash.log 2>/dev/null || true
+adb logcat -d -s VideoDl:* AndroidRuntime:* > shots/app.log 2>/dev/null || true
 adb shell "ls -la '$DIR/'" >> shots/result.txt 2>&1
 adb pull "$DIR/vdl-test-output.mp4" test-output/engine-test.mp4 >/dev/null 2>&1 || true
 i=0

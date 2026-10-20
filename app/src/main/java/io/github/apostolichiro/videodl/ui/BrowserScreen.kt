@@ -208,10 +208,19 @@ private fun AddressBar(tab: WebTab, tabs: Tabs, app: AppActions, onTabs: () -> U
             )
             Spacer(Modifier.width(10.dp))
             Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                val shown = if (home) "" else Web.pretty(url)
                 BasicTextField(
-                    value = if (editing) field else TextFieldValue(if (home) "" else Web.pretty(url)),
-                    onValueChange = {
-                        field = it
+                    value = if (editing) field else TextFieldValue(shown),
+                    onValueChange = { v ->
+                        if (!editing && v.text == shown) {
+                            // The first tap on the short address: switch to the whole address, all selected,
+                            // so typing replaces it (the tap only moved the cursor).
+                            val full = if (home) "" else url
+                            field = TextFieldValue(full, TextRange(0, full.length))
+                            selectAll++
+                        } else {
+                            field = v
+                        }
                         editing = true
                     },
                     singleLine = true,

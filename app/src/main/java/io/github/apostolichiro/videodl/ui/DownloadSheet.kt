@@ -101,8 +101,8 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
         }
     }
 
+    // The choice here is for this download only; the default (also used for shared links) is in 설정.
     fun start(n: NewJob) {
-        Store.quality = quality
         close { app.download(n) }
     }
 

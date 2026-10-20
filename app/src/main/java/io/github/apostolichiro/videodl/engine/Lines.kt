@@ -266,6 +266,8 @@ object Errors {
                 "timed out" in l || "connection" in l || "getaddrinfo" in l || "name or service not known" in l ->
                 "인터넷 연결이 불안정해서 못 받았어요. 연결을 확인하고 다시 해보세요."
             "requested format is not available" in l -> "고른 화질이 없어요. 다른 화질로 해보세요."
+            "unable to obtain file audio codec" in l || "does not contain any stream" in l && "audio" in l ->
+                "이 영상에는 소리가 없어서 소리만 받을 수는 없어요. 다른 화질로 받아 주세요."
             else -> "못 받았어요: " + e.take(200)
         }
     }
@@ -288,6 +290,7 @@ fun Errors.fixableByUpdate(raw: String?): Boolean {
         "drm", "private", "login", "log in", "sign in", "cookies", "not available in your country", "video unavailable",
         "has been removed", "no longer available", "no space left", "urlopen error", "timed out", "network is unreachable",
         "getaddrinfo", "failed to resolve", "name or service not known", "live event", "premieres in", "connection",
+        "unable to obtain file audio codec",
     )
     return hopeless.none { it in l }
 }

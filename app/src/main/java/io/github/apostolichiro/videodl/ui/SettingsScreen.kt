@@ -64,7 +64,7 @@ fun SettingsScreen(app: AppActions, tabs: Tabs) {
         if (update !is UpdateState.None) item { UpdateCard(update, app) }
 
         item { Section("다운로드") }
-        item { Item("공유로 받을 때 화질", quality.label) { pickQuality = true } }
+        item { Item("기본 화질", quality.label + " · 공유로 받을 때와 화질 고르는 창의 처음 선택") { pickQuality = true } }
         item {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text("동시에 받기", style = MaterialTheme.typography.bodyLarge)
@@ -124,7 +124,7 @@ fun SettingsScreen(app: AppActions, tabs: Tabs) {
     }
 
     if (pickQuality) {
-        Choose("공유로 받을 때 화질", Quality.entries, quality, { it.label }, onDismiss = { pickQuality = false }) {
+        Choose("기본 화질", Quality.entries, quality, { it.label }, onDismiss = { pickQuality = false }) {
             quality = it
             Store.quality = it
             pickQuality = false
