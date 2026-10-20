@@ -127,6 +127,8 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
         }
         val key = Links.normalize(u)
         if (key == lookedUp) return
+        // Another page (also when a site changes pages without reloading): the videos seen so far were the old page's.
+        if (lookedUp != null) found.value = emptyList()
         lookedUp = key
         lookup?.cancel()
         info.value = null

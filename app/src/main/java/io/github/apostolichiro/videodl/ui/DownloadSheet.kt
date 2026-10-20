@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import android.webkit.CookieManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -63,11 +64,13 @@ import io.github.apostolichiro.videodl.engine.Fmt
 import io.github.apostolichiro.videodl.engine.Links
 import io.github.apostolichiro.videodl.engine.Quality
 import io.github.apostolichiro.videodl.engine.Sniff
+import io.github.apostolichiro.videodl.engine.Streams
 import io.github.apostolichiro.videodl.engine.Web
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Bottom sheet: what the link holds, which quality, and [다운로드]. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -94,6 +97,18 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
     // no need to wait for yt-dlp to read the page (sites it knows, like Instagram, still wait: their
     // played streams are often picture-only pieces).
     val streamNow = preview == null && req.found.isNotEmpty() && !Web.isVideoPage(req.url)
+    // Of the videos the page played, the one that is the page's own (the longest; not an ad or a preview).
+    suspend fun choose(): Streams.Pick? = withContext(Dispatchers.IO) {
+        Streams.pick(req.found) { u ->
+            val cookie = try { CookieManager.getInstance().getCookie(u) } catch (_: Exception) { null }
+            Streams.fetchText(u, req.url, req.userAgent, cookie)
+        }
+    }
+    val pick by produceState<Streams.Pick?>(null, req.found) {
+        if (req.found.isNotEmpty()) value = choose()
+    }
+    fun order(p: Streams.Pick?) = p?.let { listOf(it.url) + req.found.filterNot { u -> u == it.url } } ?: req.found
+    val streamOrder = order(pick)
     val quick by produceState<QuickMeta.Meta?>(null, req.url) {
         value = withContext(Dispatchers.IO) { QuickMeta.fetch(req.url) }
     }
@@ -128,13 +143,13 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
         },
     ) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            Header(info, req, quick, streamNow)
+            Header(info, req, quick, streamNow, pick?.seconds)
             Spacer(Modifier.height(18.dp))
 
             // What "최고 화질" comes to for this video, once the lookup knows.
             val best = preview?.choices?.get(Quality.BEST)
             val detail = when {
-                streamNow -> ""
+                streamNow -> listOfNotNull(pick?.height?.let { "${it}p" }, pick?.seconds?.let { "길이 " + durationText(it.toLong()) }).joinToString(" · ")
                 info is InfoState.Loading -> "확인 중…"
                 best != null -> listOfNotNull(Estimate.resLabel(best.res), best.bytes?.let { "약 " + Fmt.size(it) }).joinToString(" · ")
                 else -> ""
@@ -170,12 +185,14 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                         when {
                             d != null && done -> close { d.files.firstOrNull()?.let { f -> app.play(d, f) } }
                             d != null -> close { Store.tab.value = Store.TAB_PROGRESS }
-                            streamNow -> {
+                            streamNow -> scope.launch {
+                                // Pressed before the right video was picked: pick it now (a moment at most).
+                                val chosen = order(pick ?: withTimeoutOrNull(5_000) { choose() })
                                 val name = quick?.title ?: req.pageTitle
                                 start(
                                     NewJob(
-                                        url = req.found.first(), quality = quality, origin = Origin.STREAM, referer = req.url,
-                                        pageTitle = name, userAgent = req.userAgent, fallbacks = req.found.drop(1),
+                                        url = chosen.first(), quality = quality, origin = Origin.STREAM, referer = req.url,
+                                        pageTitle = name, userAgent = req.userAgent, fallbacks = chosen.drop(1),
                                         title = name, thumbnail = req.pageImage ?: quick?.image,
                                     ),
                                 )
@@ -183,7 +200,7 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                             else -> start(
                                 NewJob(
                                     url = req.url, quality = quality, origin = req.origin, referer = req.referer, pageTitle = req.pageTitle,
-                                    userAgent = req.userAgent, fallbacks = req.found, title = preview?.title, thumbnail = preview?.thumbnail,
+                                    userAgent = req.userAgent, fallbacks = streamOrder, title = preview?.title, thumbnail = preview?.thumbnail,
                                 ),
                             )
                         }
@@ -202,14 +219,14 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
 }
 
 @Composable
-private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?, streamNow: Boolean) {
+private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?, streamNow: Boolean, streamSeconds: Double?) {
     val colors = MaterialTheme.colorScheme
     val p = (info as? InfoState.Ready)?.preview
     // While yt-dlp is still looking, the page's own title and picture stand in.
     val title = p?.title ?: quick?.title ?: req.pageTitle ?: Links.host(req.url)
     val picture = p?.thumbnail ?: req.pageImage ?: quick?.image
     Row(verticalAlignment = Alignment.CenterVertically) {
-        ThumbBox(netImage(picture), 128.dp, 72.dp, AppIcons.Movie, p?.duration?.let { durationText(it.toLong()) })
+        ThumbBox(netImage(picture), 128.dp, 72.dp, AppIcons.Movie, (p?.duration ?: streamSeconds)?.let { durationText(it.toLong()) })
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f).heightIn(min = 72.dp), verticalArrangement = Arrangement.Center) {
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
