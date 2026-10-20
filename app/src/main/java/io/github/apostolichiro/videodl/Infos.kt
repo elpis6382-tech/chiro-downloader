@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
@@ -187,5 +188,49 @@ object QuickMeta {
         } finally {
             c.disconnect()
         }
+    }
+}
+
+/**
+ * Instagram posts read with the in-app browser's login (for photo posts, which yt-dlp can't do). One
+ * request per post at a time; answers are kept for a while (failures only briefly).
+ */
+object InstaPosts {
+    private class Entry(val post: io.github.apostolichiro.videodl.engine.Instagram.Post?, val at: Long)
+
+    private val cache = ConcurrentHashMap<String, Entry>()
+    private val running = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<io.github.apostolichiro.videodl.engine.Instagram.Post?>>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    fun cookie(): String? = try {
+        android.webkit.CookieManager.getInstance().getCookie("https://www.instagram.com/")
+    } catch (_: Exception) {
+        null
+    }
+
+    /** What is already known about the post at [url] (null when nothing is, or it isn't a post). */
+    fun cached(url: String): io.github.apostolichiro.videodl.engine.Instagram.Post? {
+        val code = io.github.apostolichiro.videodl.engine.Instagram.shortcode(url) ?: return null
+        return cache[code]?.takeIf { fresh(it) }?.post
+    }
+
+    private fun fresh(e: Entry) = System.currentTimeMillis() - e.at < if (e.post != null) 15 * 60_000L else 60_000L
+
+    suspend fun get(url: String, userAgent: String?): io.github.apostolichiro.videodl.engine.Instagram.Post? {
+        val ig = io.github.apostolichiro.videodl.engine.Instagram
+        val code = ig.shortcode(url) ?: return null
+        cache[code]?.takeIf { fresh(it) }?.let { return it.post }
+        val d = running.computeIfAbsent(code) {
+            scope.async {
+                try {
+                    val post = ig.fetch(url, userAgent, cookie()) ?: ig.embedPhoto(url, userAgent)
+                    cache[code] = Entry(post, System.currentTimeMillis())
+                    post
+                } finally {
+                    running.remove(code)
+                }
+            }
+        }
+        return d.await()
     }
 }

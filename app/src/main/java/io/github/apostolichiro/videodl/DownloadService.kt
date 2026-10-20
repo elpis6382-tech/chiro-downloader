@@ -11,6 +11,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import io.github.apostolichiro.videodl.engine.Direct
+import io.github.apostolichiro.videodl.engine.Instagram
 import io.github.apostolichiro.videodl.engine.Engine
 import io.github.apostolichiro.videodl.engine.Errors
 import io.github.apostolichiro.videodl.engine.Event
@@ -158,6 +159,18 @@ class DownloadService : Service() {
             // refuse yt-dlp's requests); yt-dlp is the backup. Everything else goes to yt-dlp first.
             val directTried = mutableSetOf<String>()
             var outcome = Engine.Outcome(emptyList(), "not started", false, null, false)
+            // Instagram posts with photos: yt-dlp only does videos, so the post is read and fetched here.
+            val instagram = job.origin != Origin.STREAM && job.origin != Origin.SITE && Instagram.shortcode(job.url) != null
+            var post: Instagram.Post? = null
+            if (instagram && Instagram.mayHavePhotos(job.url)) {
+                post = InstaPosts.cached(job.url)
+                    ?: Instagram.fetch(job.url, job.userAgent, InstaPosts.cookie())
+                    ?: Instagram.embedPhoto(job.url, job.userAgent)
+                if (post?.hasPhotos == true) {
+                    if (!job.resume) work.deleteRecursively()
+                    outcome = runInstagram(job, post, work)
+                }
+            }
             if (job.origin == Origin.STREAM) {
                 if (!job.resume) work.deleteRecursively()
                 directTried += job.url
@@ -208,6 +221,14 @@ class DownloadService : Service() {
                 Store.update(id) { it.copy(status = Status.PREPARING, step = null, progress = null, speed = null, etaSec = null, doneBytes = null, totalBytes = null) }
                 outcome = runDownload(job, req, work, fromFallback, fresh = true)
                 attempts++
+            }
+            // yt-dlp couldn't do the Instagram post: its video straight from Instagram's own answer (logged in).
+            if (instagram && outcome.files.isEmpty() && !outcome.cancelled && !isCancelled(id)) {
+                val p = post ?: Instagram.fetch(job.url, job.userAgent, InstaPosts.cookie())
+                if (p != null && !p.hasPhotos) {
+                    val o = runInstagram(job, p, work)
+                    if (o.files.isNotEmpty() || o.cancelled) outcome = o
+                }
             }
             // yt-dlp couldn't: the streams the page played, fetched the browser's way.
             if (outcome.files.isEmpty() && !outcome.cancelled && !isCancelled(id)) {
@@ -270,6 +291,65 @@ class DownloadService : Service() {
             cookieFile.delete()
             cancelRequested.remove(id)
             pauseRequested.remove(id)
+        }
+    }
+
+    /**
+     * Instagram's photo addresses often say .heic while sending a JPEG (or the other way round): the file is
+     * named after what it really is, so the gallery opens it.
+     */
+    private fun photoExtension(f: File, isVideo: Boolean): File {
+        if (isVideo) return f
+        val head = ByteArray(12)
+        val n = try { f.inputStream().use { it.read(head) } } catch (_: Exception) { return f }
+        if (n < 12) return f
+        val ext = when {
+            head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte() -> "jpg"
+            head[0] == 0x89.toByte() && head[1] == 'P'.code.toByte() -> "png"
+            String(head, 0, 4, Charsets.ISO_8859_1) == "RIFF" && String(head, 8, 4, Charsets.ISO_8859_1) == "WEBP" -> "webp"
+            String(head, 4, 4, Charsets.ISO_8859_1) == "ftyp" -> "heic"
+            else -> return f
+        }
+        if (f.extension.equals(ext, true)) return f
+        val to = File(f.parentFile, f.nameWithoutExtension + "." + ext)
+        return if (f.renameTo(to)) to else f
+    }
+
+    /** Every photo and video of an Instagram post, at its largest size. */
+    private fun runInstagram(job: Job, post: Instagram.Post, work: File): Engine.Outcome {
+        val id = job.id
+        val owner = post.owner ?: "instagram"
+        val title = post.title ?: "인스타그램 게시물"
+        Store.update(id) { it.copy(status = Status.DOWNLOADING, title = it.title ?: title, thumbnail = it.thumbnail ?: post.cover, step = null, progress = 0f) }
+        notifyProgress(force = true)
+        val headers = Direct.Headers(job.userAgent, "https://www.instagram.com/", null) { u ->
+            try {
+                android.webkit.CookieManager.getInstance().getCookie(u)
+            } catch (_: Exception) {
+                null
+            }
+        }
+        val files = mutableListOf<File>()
+        return try {
+            post.items.forEachIndexed { i, item ->
+                val name = if (post.items.size == 1) "${owner}_${post.code}" else "${owner}_${post.code}_${i + 1}"
+                files += photoExtension(Direct.download(this, item.url, headers, File(work, "instagram"), name, stopped = { isCancelled(id) }) { done, total, fraction, speed ->
+                    Store.update(id) {
+                        it.copy(
+                            status = Status.DOWNLOADING, index = i + 1, count = post.items.size,
+                            progress = (i + (fraction ?: 0f)) / post.items.size, doneBytes = done, totalBytes = total, speed = speed,
+                        )
+                    }
+                    notifyProgress()
+                }, item.isVideo)
+            }
+            Engine.Outcome(files, null, false, null, true)
+        } catch (e: Direct.Stopped) {
+            Engine.Outcome(emptyList(), null, true, null, true)
+        } catch (e: Exception) {
+            android.util.Log.w("VideoDl", "instagram download failed", e)
+            // Whatever came through is kept.
+            Engine.Outcome(files, if (files.isEmpty()) (e.message ?: e.toString()) else null, false, "instagram: $e", files.isNotEmpty())
         }
     }
 

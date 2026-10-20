@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.apostolichiro.videodl.Downloads
 import io.github.apostolichiro.videodl.InfoState
+import io.github.apostolichiro.videodl.InstaPosts
 import io.github.apostolichiro.videodl.Infos
 import io.github.apostolichiro.videodl.Job
 import io.github.apostolichiro.videodl.NewJob
@@ -61,6 +62,7 @@ import io.github.apostolichiro.videodl.Status
 import io.github.apostolichiro.videodl.Store
 import io.github.apostolichiro.videodl.engine.Estimate
 import io.github.apostolichiro.videodl.engine.Fmt
+import io.github.apostolichiro.videodl.engine.Instagram
 import io.github.apostolichiro.videodl.engine.Links
 import io.github.apostolichiro.videodl.engine.Quality
 import io.github.apostolichiro.videodl.engine.Sniff
@@ -112,6 +114,11 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
     val quick by produceState<QuickMeta.Meta?>(null, req.url) {
         value = withContext(Dispatchers.IO) { QuickMeta.fetch(req.url) }
     }
+    // Instagram posts can be photos or albums, which yt-dlp doesn't know: those are read from Instagram itself.
+    val insta by produceState(InstaPosts.cached(req.url), req.url) {
+        if (value == null && Instagram.mayHavePhotos(req.url)) value = InstaPosts.get(req.url, req.userAgent)
+    }
+    val photos = insta?.takeIf { it.hasPhotos }
 
     // Always the best there is.
     val quality = Quality.BEST
@@ -143,12 +150,13 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
         },
     ) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            Header(info, req, quick, streamNow, pick?.seconds)
+            Header(info, req, quick, streamNow, pick?.seconds, photos)
             Spacer(Modifier.height(18.dp))
 
             // What "최고 화질" comes to for this video, once the lookup knows.
             val best = preview?.choices?.get(Quality.BEST)
             val detail = when {
+                photos != null -> photos.summary
                 streamNow -> listOfNotNull(pick?.height?.let { "${it}p" }, pick?.seconds?.let { "길이 " + durationText(it.toLong()) }).joinToString(" · ")
                 info is InfoState.Loading -> "확인 중…"
                 best != null -> listOfNotNull(Estimate.resLabel(best.res), best.bytes?.let { "약 " + Fmt.size(it) }).joinToString(" · ")
@@ -159,13 +167,13 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                     .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("최고 화질로 받아요", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(if (photos != null) "원본 크기로 받아요" else "최고 화질로 받아요", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             }
 
             dup?.let {
                 Text(
-                    if (done) "이미 받은 영상이에요" else "지금 받고 있어요",
+                    if (done) (if (photos != null) "이미 받은 게시물이에요" else "이미 받은 영상이에요") else "지금 받고 있어요",
                     style = MaterialTheme.typography.bodySmall, color = colors.tertiary, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(top = 12.dp, start = 4.dp),
                 )
@@ -173,8 +181,9 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
 
             Spacer(Modifier.height(14.dp))
             val label = when {
-                dup != null && done -> "받은 영상 보기"
+                dup != null && done -> if (photos != null) "받은 사진 보기" else "받은 영상 보기"
                 dup != null -> "받는 중 보기"
+                photos != null -> if (photos.items.size == 1) "사진 다운로드" else "${photos.items.size}개 모두 다운로드"
                 preview?.isPlaylist == true -> "${preview.playlistCount}개 모두 다운로드"
                 else -> "다운로드"
             }
@@ -185,6 +194,12 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
                         when {
                             d != null && done -> close { d.files.firstOrNull()?.let { f -> app.play(d, f) } }
                             d != null -> close { Store.tab.value = Store.TAB_PROGRESS }
+                            photos != null -> start(
+                                NewJob(
+                                    url = req.url, quality = quality, origin = req.origin, referer = req.referer, pageTitle = req.pageTitle,
+                                    userAgent = req.userAgent, title = photos.title, thumbnail = photos.cover,
+                                ),
+                            )
                             streamNow -> scope.launch {
                                 // Pressed before the right video was picked: pick it now (a moment at most).
                                 val chosen = order(pick ?: withTimeoutOrNull(5_000) { choose() })
@@ -219,18 +234,24 @@ fun DownloadSheet(req: SheetRequest, app: AppActions) {
 }
 
 @Composable
-private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?, streamNow: Boolean, streamSeconds: Double?) {
+private fun Header(info: InfoState, req: SheetRequest, quick: QuickMeta.Meta?, streamNow: Boolean, streamSeconds: Double?, photos: Instagram.Post?) {
     val colors = MaterialTheme.colorScheme
     val p = (info as? InfoState.Ready)?.preview
     // While yt-dlp is still looking, the page's own title and picture stand in.
-    val title = p?.title ?: quick?.title ?: req.pageTitle ?: Links.host(req.url)
-    val picture = p?.thumbnail ?: req.pageImage ?: quick?.image
+    val title = photos?.title ?: p?.title ?: quick?.title ?: req.pageTitle ?: Links.host(req.url)
+    val picture = photos?.cover ?: p?.thumbnail ?: req.pageImage ?: quick?.image
     Row(verticalAlignment = Alignment.CenterVertically) {
-        ThumbBox(netImage(picture), 128.dp, 72.dp, AppIcons.Movie, (p?.duration ?: streamSeconds)?.let { durationText(it.toLong()) })
+        ThumbBox(netImage(picture), 128.dp, 72.dp, AppIcons.Movie, if (photos != null) null else (p?.duration ?: streamSeconds)?.let { durationText(it.toLong()) })
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f).heightIn(min = 72.dp), verticalArrangement = Arrangement.Center) {
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            when (info) {
+            if (photos != null) {
+                Text(
+                    listOfNotNull(photos.owner?.let { "@$it" }, photos.summary).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = colors.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            } else when (info) {
                 InfoState.Loading -> if (streamNow) {
                     Text("페이지에서 재생된 영상을 바로 받을 수 있어요", style = MaterialTheme.typography.bodySmall, color = colors.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
                 } else Row(Modifier.padding(top = 5.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -19,6 +19,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import io.github.apostolichiro.videodl.engine.AdBlock
+import io.github.apostolichiro.videodl.engine.Instagram
 import io.github.apostolichiro.videodl.engine.Links
 import io.github.apostolichiro.videodl.engine.Sniff
 import io.github.apostolichiro.videodl.engine.Web
@@ -51,11 +52,14 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
     val snapshot = MutableStateFlow<Bitmap?>(null)
     /** The page's own picture (og:image), for the download sheet. */
     val pageImage = MutableStateFlow<String?>(null)
+    /** On an Instagram post: the post (its photos and videos), read ahead so the button lights up for photos too. */
+    val post = MutableStateFlow<Instagram.Post?>(null)
 
     private var pending: String? = startUrl?.takeIf { it.isNotBlank() }
     internal var view: WebView? = null
         private set
     private var lookup: Job? = null
+    private var postLookup: Job? = null
     private var lookedUp: String? = null
 
     val isHome get() = url.value.isEmpty()
@@ -113,6 +117,8 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
         progress.value = 100
         found.value = emptyList()
         info.value = null
+        postLookup?.cancel()
+        post.value = null
         lookedUp = null
         canGoBack.value = false
         canGoForward.value = false
@@ -132,6 +138,14 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
         lookedUp = key
         lookup?.cancel()
         info.value = null
+        postLookup?.cancel()
+        post.value = null
+        if (Instagram.mayHavePhotos(u)) {
+            postLookup = owner.scope.launch {
+                delay(300)
+                post.value = InstaPosts.get(u, view?.settings?.userAgentString)
+            }
+        }
         if (!Web.isVideoPage(u)) return
         lookup = owner.scope.launch {
             delay(600)
@@ -170,6 +184,7 @@ class WebTab internal constructor(val id: Long, private val owner: Tabs, startUr
 
     internal fun destroy() {
         lookup?.cancel()
+        postLookup?.cancel()
         view?.let { owner.release(it) }
         view = null
     }

@@ -28,6 +28,7 @@ object Saver {
         "jpg", "jpeg" -> "image/jpeg"
         "png" -> "image/png"
         "webp" -> "image/webp"
+        "heic" -> "image/heic"
         "gif" -> "image/gif"
         else -> "application/octet-stream"
     }
